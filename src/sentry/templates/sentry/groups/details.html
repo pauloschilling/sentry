@@ -64,9 +64,7 @@
                     <div class="alert alert-info">This event has been muted. You will not be notified of any changes and it will not show up in the default feed.</div>
                 {% endif %}
 
-                {% if event.has_two_part_message %}
-                    <pre id="full-message">{{ event.message }}</pre>
-                {% endif %}
+                <pre id="full-message">{{ event.message }}</pre>
 
                 {% include "sentry/partial/_event_details.html" %}
             {% endwith %}
