@@ -113,7 +113,7 @@ def manage_users(request):
 
 
 @requires_admin
-@transaction.commit_on_success
+@transaction.atomic
 @csrf_protect
 def create_new_user(request):
     if not request.user.is_superuser:
@@ -134,7 +134,6 @@ def create_new_user(request):
 
         if form.cleaned_data['create_project']:
             project = Project.objects.create(
-                owner=user,
                 name='%s\'s New Project' % user.username.capitalize()
             )
             member = project.team.member_set.get(user=user)

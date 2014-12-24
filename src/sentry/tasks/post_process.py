@@ -13,7 +13,6 @@ import logging
 from django.conf import settings
 from hashlib import md5
 
-from sentry.constants import STATUS_ACTIVE, STATUS_INACTIVE
 from sentry.plugins import plugins
 from sentry.rules import EventState, rules
 from sentry.tasks.base import instrumented_task
@@ -24,13 +23,13 @@ from sentry.utils.safe import safe_execute
 rules_logger = logging.getLogger('sentry.errors')
 
 
-def condition_matches(project, condition, event, state):
+def condition_matches(project, condition, event, state, rule):
     condition_cls = rules.get(condition['id'])
     if condition_cls is None:
         rules_logger.error('Unregistered condition %r', condition['id'])
         return
 
-    condition_inst = condition_cls(project, data=condition)
+    condition_inst = condition_cls(project, data=condition, rule=rule)
     return safe_execute(condition_inst.passes, event, state)
 
 
@@ -88,7 +87,7 @@ def post_process_group(event, is_new, is_regression, is_sample, **kwargs):
             group=event.group,
             defaults={
                 'project': project,
-                'status': STATUS_INACTIVE,
+                'status': GroupRuleStatus.INACTIVE,
             },
         )
 
@@ -96,11 +95,11 @@ def post_process_group(event, is_new, is_regression, is_sample, **kwargs):
             is_new=is_new,
             is_regression=is_regression,
             is_sample=is_sample,
-            rule_is_active=rule_status.status == STATUS_ACTIVE,
+            rule_is_active=rule_status.status == GroupRuleStatus.ACTIVE,
         )
 
         condition_iter = (
-            condition_matches(project, c, event, state)
+            condition_matches(project, c, event, state, rule)
             for c in condition_list
         )
 
@@ -115,18 +114,18 @@ def post_process_group(event, is_new, is_regression, is_sample, **kwargs):
                                match, rule.id)
             continue
 
-        if passed and rule_status.status == STATUS_INACTIVE:
+        if passed and rule_status.status == GroupRuleStatus.INACTIVE:
             # we only fire if we're able to say that the state has changed
             GroupRuleStatus.objects.filter(
                 id=rule_status.id,
-                status=STATUS_INACTIVE,
-            ).update(status=STATUS_ACTIVE)
-        elif not passed and rule_status.status == STATUS_ACTIVE:
+                status=GroupRuleStatus.INACTIVE,
+            ).update(status=GroupRuleStatus.ACTIVE)
+        elif not passed and rule_status.status == GroupRuleStatus.ACTIVE:
             # update the state to suggest this rule can fire again
             GroupRuleStatus.objects.filter(
                 id=rule_status.id,
-                status=STATUS_ACTIVE,
-            ).update(status=STATUS_INACTIVE)
+                status=GroupRuleStatus.ACTIVE,
+            ).update(status=GroupRuleStatus.INACTIVE)
 
         if passed:
             execute_rule.apply_async(
@@ -158,7 +157,7 @@ def execute_rule(rule_id, event, state):
             rules_logger.error('Unregistered action %r', action['id'])
             continue
 
-        action_inst = action_cls(project, data=action)
+        action_inst = action_cls(project, data=action, rule=rule)
         safe_execute(action_inst.after, event=event, state=state)
 
 

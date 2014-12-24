@@ -78,6 +78,10 @@ class Event(Model):
         return self.project.team
 
     @property
+    def organization(self):
+        return self.project.organization
+
+    @property
     def version(self):
         return self.data.get('version', '5')
 
@@ -157,6 +161,8 @@ class Event(Model):
             # at one point Sentry allowed invalid tag sets such as (foo, bar)
             # vs ((tag, foo), (tag, bar))
             return []
+
+    tags = property(get_tags)
 
     def as_dict(self):
         # We use a SortedDict to keep elements ordered for a potential JSON serializer

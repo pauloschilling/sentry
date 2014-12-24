@@ -18,7 +18,7 @@ ONE_DAY = ONE_HOUR * 24
 ROLLUPS = (
     # (time in seconds, samples to keep)
     (10, 30),  # 5 minute at 10 seconds
-    (ONE_HOUR, ONE_DAY * 7),  # 1 days at 1 hour
+    (ONE_HOUR, ONE_DAY * 7),  # 7 days at 1 hour
 )
 
 
@@ -35,6 +35,11 @@ class TSDBModel(Enum):
     project_total_received = 100
     # the number of events rejected due to rate limiting
     project_total_rejected = 101
+
+    # the number of events sent to the server
+    organization_total_received = 200
+    # the number of events rejected due to rate limiting
+    organization_total_rejected = 201
 
 
 class BaseTSDB(object):

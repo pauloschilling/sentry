@@ -3,14 +3,15 @@ from __future__ import absolute_import, print_function
 from django.conf import settings
 from django.contrib.auth.signals import user_logged_in
 from django.db import connections
-from django.db.models.signals import post_syncdb, post_save, pre_delete
+from django.db.models.signals import post_syncdb, post_save
 from pkg_resources import parse_version as Version
 
 from sentry import options
-from sentry.constants import MEMBER_OWNER
 from sentry.models import (
-    Project, User, Team, ProjectKey, UserOption, TagKey, TagValue,
-    GroupTagValue, GroupTagKey, Activity, TeamMember, Alert)
+    Organization, OrganizationMemberType, Project, User, Team, ProjectKey,
+    UserOption, TagKey, TagValue, GroupTagValue, GroupTagKey, Activity,
+    Alert
+)
 from sentry.signals import buffer_incr_complete, regression_signal
 from sentry.utils.safe import safe_execute
 
@@ -56,10 +57,18 @@ def create_default_project(id, name, slug, verbosity=2, **kwargs):
             }
         )
 
-    team, _ = Team.objects.get_or_create(
+    org, _ = Organization.objects.get_or_create(
         name='Sentry',
         defaults={
             'owner': user,
+        }
+    )
+
+    team, _ = Team.objects.get_or_create(
+        name='Sentry',
+        defaults={
+            'owner': org.owner,
+            'organization': org,
         }
     )
 
@@ -69,6 +78,7 @@ def create_default_project(id, name, slug, verbosity=2, **kwargs):
         name=name,
         slug=slug,
         team=team,
+        organization=team.organization,
         **kwargs
     )
 
@@ -110,7 +120,7 @@ def create_keys_for_project(instance, created, **kwargs):
         )
 
 
-def create_team_member_for_owner(instance, created, **kwargs):
+def create_org_member_for_owner(instance, created, **kwargs):
     if not created:
         return
 
@@ -119,16 +129,9 @@ def create_team_member_for_owner(instance, created, **kwargs):
 
     instance.member_set.get_or_create(
         user=instance.owner,
-        type=MEMBER_OWNER,
+        type=OrganizationMemberType.OWNER,
+        has_global_access=True,
     )
-
-
-def remove_key_for_team_member(instance, **kwargs):
-    for project in instance.team.project_set.all():
-        ProjectKey.objects.filter(
-            project=project,
-            user=instance.user,
-        ).delete()
 
 
 # Set user language if set
@@ -206,15 +209,9 @@ post_save.connect(
     weak=False,
 )
 post_save.connect(
-    create_team_member_for_owner,
-    sender=Team,
-    dispatch_uid="create_team_member_for_owner",
-    weak=False,
-)
-pre_delete.connect(
-    remove_key_for_team_member,
-    sender=TeamMember,
-    dispatch_uid="remove_key_for_team_member",
+    create_org_member_for_owner,
+    sender=Organization,
+    dispatch_uid="create_org_member_for_owner",
     weak=False,
 )
 user_logged_in.connect(
