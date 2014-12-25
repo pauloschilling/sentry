@@ -28,11 +28,11 @@
   },
   "private": true,
   "scripts": {
-    "postinstall": "bower install",
-    "pretest": "npm install && npm run build_static",
+    "postinstall": "bower install --allow-root",
+    "pretest": "npm install --unsafe-perm && npm run build_static --unsafe-perm",
     "test": "mocha-phantomjs -p node_modules/phantomjs/bin/phantomjs -R dot tests/js/index.html",
     "build_static": "gulp dist",
-    "prelint": "npm install",
+    "prelint": "npm install  --unsafe-perm",
     "lint": "jshint src/"
   }
 }
