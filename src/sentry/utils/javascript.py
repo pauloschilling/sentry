@@ -16,9 +16,10 @@ from django.utils.html import escape
 from sentry.app import env, tsdb
 from sentry.constants import TAG_LABELS
 from sentry.models import (
-    Group, GroupBookmark, GroupTagKey, GroupSeen, GroupStatus, ProjectOption
+    Group, GroupBookmark, GroupMeta, GroupTagKey, GroupSeen, GroupStatus,
+    ProjectOption
 )
-from sentry.templatetags.sentry_plugins import get_tags
+from sentry.templatetags.sentry_plugins import get_legacy_annotations
 from sentry.utils import json
 from sentry.utils.db import attach_foreignkey
 from sentry.utils.http import absolute_uri
@@ -73,6 +74,8 @@ class GroupTransformer(Transformer):
         from sentry.templatetags.sentry_plugins import handle_before_events
 
         attach_foreignkey(objects, Group.project, ['team'])
+
+        GroupMeta.objects.populate_cache(objects)
 
         if request and objects:
             handle_before_events(request, objects)
@@ -190,6 +193,8 @@ class GroupTransformer(Transformer):
             d['historicalData'] = obj.historical_data
         if hasattr(obj, 'annotations'):
             d['annotations'] = obj.annotations
+
+        # TODO(dcramer): these aren't tags, and annotations aren't annotations
         if request:
-            d['tags'] = list(get_tags(obj, request))
+            d['tags'] = get_legacy_annotations(obj, request)
         return d

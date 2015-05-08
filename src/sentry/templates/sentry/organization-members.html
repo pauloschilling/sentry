@@ -10,47 +10,75 @@
 
 {% block inner %}
   <div class="page-header">
-    <h2>Members</h2>
+    <h2>{% trans "Members" %}</h2>
   </div>
 
   <p>{% blocktrans %}Members of your organization gain slightly elevated permissions over individual team members. For example, organization administrators can create new teams as well as manage all organization settings (including the list of admins).{% endblocktrans %}</p>
 
   <br>
 
-  <table class="table table-striped member-list">
+  {% if request_list %}
+    <div class="access-request-list">
+      <h3>Pending Access Requests</h3>
+      <ul>
+        {% for access_request in request_list %}
+          <li>
+            <div class="pull-right">
+              <a href="#" class="btn btn-primary btn-small"
+                 data-action="approve" data-id="{{ access_request.id }}">Approve</a>
+              <a href="#" class="btn btn-default btn-small"
+                 data-action="deny" data-id="{{ access_request.id }}">Deny</a>
+            </div>
+            <strong>{{ access_request.member.user.get_display_name }}</strong> requests access to the <strong>{{ access_request.team.name }}</strong> team.
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% elif ref == 'access-requests' %}
+    <div class="alert alert-block alert-info">
+      <p>All pending access requests have been taken care of.</p>
+    </div>
+  {% endif %}
+
+  <table class="table simple-list table-bordered member-list">
     <colgroup>
-      <col width="20px"/>
-      <col/>
-      <col width="250px"/>
-      <col width="100px"/>
-      <col width="100px"/>
-      <col width="20px"/>
+      <col width="30%"/>
+      <col width="25%" />
+      <col width="20%"/>
+      <col width="20%"/>
+      <col width="5%"/>
     </colgroup>
     <thead>
       <tr>
-        <th>&nbsp;</th>
         <th>Member</th>
         <th>&nbsp;</th>
-        <th>Type</th>
+        <th>Role</th>
         <th>Teams</th>
         <th>&nbsp;</th>
       </tr>
     </thead>
     <tbody>
-      {% for member, team_list in member_list %}
+      {% for member, team_list, needs_sso in member_list %}
         <tr>
-          <td>
-            <img class="avatar" src="{% gravatar_url member.get_email size 20 %}">
-          </td>
-          <td>
-            <a href="{% url 'sentry-organization-member-settings' organization.slug member.id %}">
+          <td class="user-info">
+            <img class="avatar" src="{% gravatar_url member.get_email size 80 %}">
+            <strong><a href="{% url 'sentry-organization-member-settings' organization.slug member.id %}">
               {{ member.get_display_name }}
-            </a>
-            {% if member.is_pending %}
-              <small>&mdash; Invited</small>
+            </a></strong>
+            <br />
+            <small>{{ member.get_email }}</small>
+            <br />
+          </td>
+          <td class="status">
+            {% if needs_sso or member.is_pending %}
+              {% if needs_sso %}
+                <strong>Missing SSO Link</strong>
+              {% else %}
+                <strong>Invited</strong>
+              {% endif %}
+              <a href="javascript:void(0)" class="resend-invite btn btn-small btn-primary" data-member-id="{{ member.id }}">Resend invite</a>
             {% endif %}
           </td>
-          <td>{{ member.get_email }}</td>
           <td>{{ member.get_type_display }}</td>
           <td>
             {% if member.has_global_access %}
@@ -98,8 +126,66 @@
       success: function() {
         $this.parents('tr').remove();
       },
+      error: function(xhr) {
+        if (xhr.responseJSON) {
+          alert('Unable to remove member: ' + xhr.responseJSON.detail);
+        } else {
+          alert('There was an error while trying to remove the member.');
+        }
+      }
+    });
+  });
+
+  $('.resend-invite').click(function(){
+    var $link = $(this);
+    var $loader = $('<span class="icon-spinner spin"></span>');
+
+    $link.replaceWith($loader);
+
+    $.ajax({
+      url: app.config.urlPrefix + '/api/0/organizations/' + app.config.organizationId + '/members/' + $link.data('member-id') + '/',
+      data: JSON.stringify({
+        reinvite: 1,
+      }),
+      contentType: 'application/json',
+      method: 'PUT',
+      success: function() {
+        $loader.replaceWith('<span>Sent!</span>');
+      },
       error: function() {
-        alert('There was an error while trying to remove the team member.');
+        $loader.replaceWith($link);
+        alert('There was an error while trying to reinvite the member.');
+      }
+    });
+  });
+
+  $('.access-request-list li a').click(function(e){
+    var $el = $(this),
+        $row = $el.parents('li');
+    if (!$el.data('action')) {
+      return;
+    }
+    e.preventDefault();
+
+    $row.addClass('loading');
+    $('a', $row).attr('disabled', true);
+
+    $.ajax({
+      method: 'PUT',
+      url: app.config.urlPrefix + '/api/0/organizations/' + app.config.organizationId + '/access-requests/' + $el.data('id') + '/',
+      contentType: 'application/json',
+      data: JSON.stringify({
+        isApproved: $el.data('action') === 'approve'
+      }),
+      success: function() {
+        $row.remove();
+        if (!$('.access-request-list li').length) {
+          $('.access-request-list').remove();
+        }
+      },
+      error: function() {
+        window.alert('We were unable to act on the access request. Maybe someone else beat you to it?');
+        $('a', $row).attr('disabled', false);
       }
     });
   });

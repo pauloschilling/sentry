@@ -12,9 +12,9 @@ from __future__ import absolute_import, print_function
 
 import logging
 import os.path
+from collections import OrderedDict
 
 from django.conf import settings
-from django.utils.datastructures import SortedDict
 from django.utils.translation import ugettext_lazy as _
 
 
@@ -23,13 +23,16 @@ def get_all_languages():
     for path in os.listdir(os.path.join(MODULE_ROOT, 'locale')):
         if path.startswith('.'):
             continue
+        if '_' in path:
+            pre, post = path.split('_', 1)
+            path = '{}-{}'.format(pre, post.lower())
         results.append(path)
     return results
 
 MODULE_ROOT = os.path.dirname(__import__('sentry').__file__)
 DATA_ROOT = os.path.join(MODULE_ROOT, 'data')
 
-SORT_OPTIONS = SortedDict((
+SORT_OPTIONS = OrderedDict((
     ('priority', _('Priority')),
     ('date', _('Last Seen')),
     ('new', _('First Seen')),
@@ -38,7 +41,7 @@ SORT_OPTIONS = SortedDict((
     ('avgtime', _('Average Time Spent')),
 ))
 
-SEARCH_SORT_OPTIONS = SortedDict((
+SEARCH_SORT_OPTIONS = OrderedDict((
     ('score', _('Score')),
     ('date', _('Last Seen')),
     ('new', _('First Seen')),
@@ -146,7 +149,8 @@ MAX_CULPRIT_LENGTH = 200
 # which we don't want to worry about conflicts on.
 RESERVED_ORGANIZATION_SLUGS = (
     'admin', 'manage', 'login', 'account', 'register', 'api',
-    'organizations', 'teams', 'projects', 'help',
+    'accept', 'organizations', 'teams', 'projects', 'help',
+    'docs', 'logout', '404', '500', '_static',
 )
 
 RESERVED_TEAM_SLUGS = RESERVED_ORGANIZATION_SLUGS
@@ -159,7 +163,7 @@ LOG_LEVELS = {
     logging.FATAL: 'fatal',
 }
 DEFAULT_LOG_LEVEL = 'error'
-DEFAULT_LOGGER_NAME = 'root'
+DEFAULT_LOGGER_NAME = ''
 
 # Default alerting threshold values
 DEFAULT_ALERT_PROJECT_THRESHOLD = (500, 25)  # 500%, 25 events
@@ -196,7 +200,36 @@ SENTRY_RULES = (
     'sentry.rules.conditions.regression_event.RegressionEventCondition',
     'sentry.rules.conditions.tagged_event.TaggedEventCondition',
     'sentry.rules.conditions.event_frequency.EventFrequencyCondition',
+    'sentry.rules.conditions.event_attribute.EventAttributeCondition',
 )
 
 # methods as defined by http://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html + PATCH
 HTTP_METHODS = ('GET', 'POST', 'PUT', 'OPTIONS', 'HEAD', 'DELETE', 'TRACE', 'CONNECT', 'PATCH')
+
+CLIENT_RESERVED_ATTRS = (
+    'project',
+    'event_id',
+    'message',
+    'checksum',
+    'culprit',
+    'level',
+    'time_spent',
+    'logger',
+    'server_name',
+    'site',
+    'timestamp',
+    'extra',
+    'modules',
+    'tags',
+    'platform',
+    'release',
+)
+
+DEFAULT_SCRUBBED_FIELDS = (
+    'password',
+    'secret',
+    'passwd',
+    'authorization',
+    'api_key',
+    'apikey',
+)

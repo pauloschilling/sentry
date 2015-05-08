@@ -50,8 +50,11 @@ The following extensions are available and maintained by members of the Sentry c
 * `sentry-irc <https://github.com/gisce/sentry-irc>`_
 * `sentry-irccat <https://github.com/russss/sentry-irccat>`_
 * `sentry-jira <https://github.com/thurloat/sentry-jira>`_
+* `sentry-kafka <https://github.com/Banno/getsentry-kafka>`_
+* `sentry-ldap-auth <https://github.com/banno/getsentry-ldap-auth>`_
 * `sentry-lighthouse <https://github.com/gthb/sentry-lighthouse>`_
 * `sentry-notifico <https://github.com/lukegb/sentry-notifico>`_
+* `sentry-opsgenie <http://github.com/getsentry/sentry-opsgenie>`_
 * `sentry-phabricator <https://github.com/getsentry/sentry-phabricator>`_
 * `sentry-pivotal <https://github.com/getsentry/sentry-pivotal>`_
 * `sentry-pushover <https://github.com/dz0ny/sentry-pushover>`_
@@ -60,7 +63,6 @@ The following extensions are available and maintained by members of the Sentry c
 * `sentry-statsd <https://github.com/dreadatour/sentry-statsd>`_
 * `sentry-top <https://github.com/getsentry/sentry-top>`_
 * `sentry-trello <https://github.com/DamianZaremba/sentry-trello>`_
-* `sentry-webhooks <https://github.com/getsentry/sentry-webhooks>`_
 * `sentry-whatsapp <https://github.com/ecarreras/sentry-whatsapp>`_
 * `sentry-xmpp <https://github.com/chroto/sentry-xmpp>`_
 * `sentry-youtrack <https://github.com/bogdal/sentry-youtrack>`_

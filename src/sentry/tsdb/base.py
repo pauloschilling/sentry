@@ -7,6 +7,7 @@ sentry.tsdb.base
 """
 from __future__ import absolute_import
 
+from django.conf import settings
 from enum import Enum
 
 ONE_MINUTE = 60
@@ -14,15 +15,9 @@ ONE_HOUR = ONE_MINUTE * 60
 ONE_DAY = ONE_HOUR * 24
 
 
-# rollups must be ordered from highest granularity to lowest
-ROLLUPS = (
-    # (time in seconds, samples to keep)
-    (10, 30),  # 5 minute at 10 seconds
-    (ONE_HOUR, ONE_DAY * 7),  # 7 days at 1 hour
-)
-
-
 class TSDBModel(Enum):
+    internal = 0
+
     # number of events seen specific to grouping
     project = 1
     project_tag_key = 2
@@ -45,7 +40,7 @@ class TSDBModel(Enum):
 class BaseTSDB(object):
     models = TSDBModel
 
-    def __init__(self, rollups=ROLLUPS):
+    def __init__(self, rollups=settings.SENTRY_TSDB_ROLLUPS):
         self.rollups = rollups
 
     def normalize_to_epoch(self, timestamp, seconds):

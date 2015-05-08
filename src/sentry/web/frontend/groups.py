@@ -23,6 +23,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 
 from sentry import app
+from sentry.auth import access
 from sentry.constants import (
     SORT_OPTIONS, MEMBER_USER, DEFAULT_SORT_OPTION, EVENTS_PER_PAGE
 )
@@ -30,9 +31,7 @@ from sentry.db.models import create_or_update
 from sentry.models import (
     Project, Group, GroupMeta, Event, Activity, EventMapping, TagKey, GroupSeen
 )
-from sentry.permissions import (
-    can_admin_group, can_remove_group, can_create_projects
-)
+from sentry.permissions import can_create_projects
 from sentry.plugins import plugins
 from sentry.search.utils import parse_query
 from sentry.utils import json
@@ -140,20 +139,34 @@ def render_with_group_context(group, template, context, request=None,
         'organization': group.project.organization,
         'project': group.project,
         'group': group,
-        'can_admin_event': can_admin_group(request.user, group),
-        'can_remove_event': can_remove_group(request.user, group),
     })
+
+    if request and request.user.is_authenticated():
+        context['ACCESS'] = access.from_user(
+            user=request.user,
+            organization=group.organization,
+        ).to_django_context()
+    else:
+        context['ACCESS'] = access.DEFAULT.to_django_context()
 
     if event:
         if event.id:
+            # TODO(dcramer): we dont want to actually use gt/lt here as it should
+            # be inclusive. However, that would need to ensure we have some kind
+            # of way to know which event was the previous (an offset), or to add
+            # a third sort key (which is not yet indexed)
             base_qs = group.event_set.exclude(id=event.id)
             try:
-                next_event = base_qs.filter(datetime__gte=event.datetime).order_by('datetime')[0:1].get()
+                next_event = base_qs.filter(
+                    datetime__gt=event.datetime,
+                ).order_by('datetime')[0:1].get()
             except Event.DoesNotExist:
                 next_event = None
 
             try:
-                prev_event = base_qs.filter(datetime__lte=event.datetime).order_by('-datetime')[0:1].get()
+                prev_event = base_qs.filter(
+                    datetime__lt=event.datetime,
+                ).order_by('-datetime')[0:1].get()
             except Event.DoesNotExist:
                 prev_event = None
         else:
@@ -207,6 +220,10 @@ def dashboard(request, organization, team):
         'organization': team.organization,
         'team': team,
         'project_list': project_list,
+        'ACCESS': access.from_user(
+            user=request.user,
+            organization=organization,
+        ).to_django_context(),
     }, request)
 
 
@@ -222,13 +239,17 @@ def wall_display(request, organization, team):
         'team': team,
         'organization': team.organization,
         'project_list': project_list,
+        'ACCESS': access.from_user(
+            user=request.user,
+            organization=organization,
+        ).to_django_context(),
     }, request)
 
 
 @login_required
 @has_access
 def group_list(request, organization, project):
-    query = request.GET.get('query', 'is:unresolved')
+    query = request.GET.get('query')
     if query and uuid_re.match(query):
         # Forward to event if it exists
         try:
@@ -280,6 +301,10 @@ def group_list(request, organization, project):
         'cursorless_query_string': cursorless_query_string,
         'sort_label': sort_label,
         'SORT_OPTIONS': SORT_OPTIONS,
+        'ACCESS': access.from_user(
+            user=request.user,
+            organization=organization,
+        ).to_django_context(),
     }, request)
 
 
@@ -343,7 +368,7 @@ def group_details(request, organization, project, group, event_id=None):
     else:
         add_note_form = NewNoteForm()
 
-    if project.has_access(request.user):
+    if request.user.is_authenticated() and project.has_access(request.user):
         # update that the user has seen this group
         create_or_update(
             GroupSeen,
@@ -417,9 +442,16 @@ def group_tag_list(request, organization, project, group):
     def percent(total, this):
         return int(this / total * 100)
 
+    GroupMeta.objects.populate_cache([group])
+
+    queryset = TagKey.objects.filter(
+        project=project,
+        key__in=[t['key'] for t in group.get_tags()],
+    )
+
     # O(N) db access
     tag_list = []
-    for tag_key in TagKey.objects.filter(project=project, key__in=group.get_tags()):
+    for tag_key in queryset:
         tag_list.append((tag_key, [
             (value, times_seen, percent(group.times_seen, times_seen))
             for (value, times_seen, first_seen, last_seen)
@@ -434,6 +466,8 @@ def group_tag_list(request, organization, project, group):
 
 @has_group_access
 def group_tag_details(request, organization, project, group, tag_name):
+    GroupMeta.objects.populate_cache([group])
+
     sort = request.GET.get('sort')
     if sort == 'date':
         order_by = '-last_seen'
@@ -457,7 +491,9 @@ def group_event_list(request, organization, project, group):
 
     for event in event_list:
         event.project = project
+        event.group = group
 
+    GroupMeta.objects.populate_cache([group])
     Event.objects.bind_nodes(event_list, 'data')
 
     return render_with_group_context(group, 'sentry/groups/event_list.html', {
@@ -473,11 +509,12 @@ def group_event_details_json(request, organization, project, group_id, event_id_
     if event_id_or_latest == 'latest':
         # It's possible that a message would not be created under certain
         # circumstances (such as a post_save signal failing)
-        event = group.get_latest_event() or Event()
+        event = group.get_latest_event() or Event(group=group)
     else:
         event = get_object_or_404(group.event_set, pk=event_id_or_latest)
 
     Event.objects.bind_nodes([event], 'data')
+    GroupMeta.objects.populate_cache([group])
 
     return HttpResponse(json.dumps(event.as_dict()), mimetype='application/json')
 

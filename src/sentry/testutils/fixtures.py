@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from sentry.models import (
     Activity, Event, Group, Organization, OrganizationMember,
-    OrganizationMemberType, Project, Team, User
+    OrganizationMemberTeam, OrganizationMemberType, Project, Team, User
 )
 from sentry.utils.compat import pickle
 from sentry.utils.strings import decompress
@@ -28,7 +28,7 @@ LEGACY_DATA = pickle.loads(decompress("""eJy9WW1v20YS/q5fwfqLpECluMvXFSzjgKK9Bri
 class Fixtures(object):
     @fixture
     def projectkey(self):
-        return self.create_project_key(project=self.project, user=self.user)
+        return self.create_project_key(project=self.project)
 
     @fixture
     def user(self):
@@ -50,7 +50,6 @@ class Fixtures(object):
             organization=self.organization,
             name='foo',
             slug='foo',
-            owner=self.organization.owner,
         )
 
     @fixture
@@ -90,7 +89,10 @@ class Fixtures(object):
         om = OrganizationMember.objects.create(**kwargs)
         if teams:
             for team in teams:
-                om.teams.add(team)
+                OrganizationMemberTeam.objects.create(
+                    team=team,
+                    organizationmember=om,
+                )
         return om
 
     def create_team(self, **kwargs):
@@ -99,8 +101,6 @@ class Fixtures(object):
             kwargs['slug'] = slugify(six.text_type(kwargs['name']))
         if not kwargs.get('organization'):
             kwargs['organization'] = self.organization
-        if not kwargs.get('owner'):
-            kwargs['owner'] = kwargs['organization'].owner
 
         return Team.objects.create(**kwargs)
 
@@ -115,8 +115,8 @@ class Fixtures(object):
 
         return Project.objects.create(**kwargs)
 
-    def create_project_key(self, project, user):
-        return project.key_set.get_or_create(user=user)[0]
+    def create_project_key(self, project):
+        return project.key_set.get_or_create()[0]
 
     def create_user(self, email=None, **kwargs):
         if not email:

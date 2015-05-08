@@ -64,7 +64,7 @@ class GroupSerializer(Serializer):
 
             tags = {}
             for key in tag_counts.iterkeys():
-                label = TAG_LABELS.get(key, key.replace('_', ' ')).lower() + 's'
+                label = TAG_LABELS.get(key, key.replace('_', ' ')).lower()
                 try:
                     value = tag_counts[key].get(item.id, 0)
                 except KeyError:
@@ -108,6 +108,7 @@ class GroupSerializer(Serializer):
             'lastSeen': obj.last_seen,
             'timeSpent': obj.avg_time_spent,
             'isResolved': obj.get_status() == GroupStatus.RESOLVED,
+            'level': obj.get_level_display(),
             'status': status_label,
             'isPublic': obj.is_public,
             # 'score': getattr(obj, 'sort_value', 0),

@@ -20,7 +20,7 @@ class OrganizationMemberSettingsView(OrganizationView):
             initial={
                 'type': member.type,
                 'has_global_access': member.has_global_access,
-                'teams': member.teams.all(),
+                'teams': member.get_teams(),
             }
         )
 
@@ -52,7 +52,6 @@ class OrganizationMemberSettingsView(OrganizationView):
         try:
             member = OrganizationMember.objects.get(id=member_id)
         except OrganizationMember.DoesNotExist:
-            print("cannot find member id")
             return self.redirect(reverse('sentry'))
 
         if request.POST.get('op') == 'reinvite' and member.is_pending:

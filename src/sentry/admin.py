@@ -17,8 +17,8 @@ from django.template.response import TemplateResponse
 from django.utils.translation import ugettext, ugettext_lazy as _
 
 from sentry.models import (
-    AuditLogEntry, Broadcast, HelpPage, Organization, OrganizationMember,
-    Project, Team, User
+    AuthIdentity, AuthProvider, AuditLogEntry, Broadcast, HelpPage, Organization,
+    OrganizationMember, Project, Team, User
 )
 
 csrf_protect_m = method_decorator(csrf_protect)
@@ -36,7 +36,7 @@ admin.site.register(Broadcast, BroadcastAdmin)
 class ProjectAdmin(admin.ModelAdmin):
     list_display = ('name', 'slug', 'organization', 'platform', 'status', 'date_added')
     list_filter = ('status', 'platform', 'public')
-    search_fields = ('name', 'team__owner__username', 'team__owner__email', 'team__slug',
+    search_fields = ('name', 'organization__slug', 'organization__name', 'team__slug',
                      'team__name', 'slug')
     raw_id_fields = ('team', 'organization')
 
@@ -46,8 +46,8 @@ admin.site.register(Project, ProjectAdmin)
 class OrganizationTeamInline(admin.TabularInline):
     model = Team
     extra = 1
-    fields = ('name', 'slug', 'owner', 'status', 'date_added')
-    raw_id_fields = ('organization', 'owner')
+    fields = ('name', 'slug', 'status', 'date_added')
+    raw_id_fields = ('organization',)
 
 
 class OrganizationMemberInline(admin.TabularInline):
@@ -62,9 +62,28 @@ class OrganizationAdmin(admin.ModelAdmin):
     list_filter = ('status',)
     search_fields = ('name', 'owner__username', 'owner__email', 'slug')
     raw_id_fields = ('owner',)
+    fields = ('name', 'slug', 'owner', 'status')
     inlines = (OrganizationMemberInline, OrganizationTeamInline)
 
 admin.site.register(Organization, OrganizationAdmin)
+
+
+class AuthProviderAdmin(admin.ModelAdmin):
+    list_display = ('organization', 'provider', 'date_added')
+    search_fields = ('organization',)
+    raw_id_fields = ('organization', 'default_teams')
+    list_filter = ('provider',)
+
+admin.site.register(AuthProvider, AuthProviderAdmin)
+
+
+class AuthIdentityAdmin(admin.ModelAdmin):
+    list_display = ('user', 'auth_provider', 'ident', 'date_added', 'last_verified')
+    list_filter = ('auth_provider__provider',)
+    search_fields = ('user', 'auth_provider__organization')
+    raw_id_fields = ('user', 'auth_provider')
+
+admin.site.register(AuthIdentity, AuthIdentityAdmin)
 
 
 class TeamProjectInline(admin.TabularInline):
@@ -78,13 +97,10 @@ class TeamAdmin(admin.ModelAdmin):
     list_display = ('name', 'slug', 'organization', 'status', 'date_added')
     list_filter = ('status',)
     search_fields = ('name', 'organization__name', 'slug')
-    raw_id_fields = ('owner', 'organization')
+    raw_id_fields = ('organization',)
     inlines = (TeamProjectInline,)
 
     def save_model(self, request, obj, form, change):
-        # TODO(dcramer): remove when ownership is irrelevant
-        if change:
-            obj.owner = obj.organization.owner
         super(TeamAdmin, self).save_model(request, obj, form, change)
         if not change:
             return
@@ -254,7 +270,7 @@ admin.site.register(User, UserAdmin)
 class AuditLogEntryAdmin(admin.ModelAdmin):
     list_display = ('event', 'organization', 'actor', 'datetime')
     list_filter = ('event', 'datetime')
-    search_fields = ('actor__email', 'organization__name', 'organization__slug', 'get_note')
+    search_fields = ('actor__email', 'organization__name', 'organization__slug')
     raw_id_fields = ('organization', 'actor', 'target_user')
 
 admin.site.register(AuditLogEntry, AuditLogEntryAdmin)

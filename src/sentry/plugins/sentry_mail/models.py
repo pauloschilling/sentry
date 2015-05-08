@@ -73,9 +73,9 @@ class MailPlugin(NotificationPlugin):
     def on_alert(self, alert):
         project = alert.project
         subject = '[{0} {1}] ALERT: {2}'.format(
-            project.team.name.encode('utf-8'),
-            project.name.encode('utf-8'),
-            alert.message.encode('utf-8'),
+            project.team.name,
+            project.name,
+            alert.message,
         )
         template = 'sentry/emails/alert.txt'
         html_template = 'sentry/emails/alert.html'
@@ -144,7 +144,10 @@ class MailPlugin(NotificationPlugin):
             body = interface.to_email_html(event)
             if not body:
                 continue
-            interface_list.append((interface.get_title(), mark_safe(body)))
+            text_body = interface.to_string(event)
+            interface_list.append(
+                (interface.get_title(), mark_safe(body), text_body)
+            )
 
         subject = group.get_email_subject()
 
@@ -153,13 +156,12 @@ class MailPlugin(NotificationPlugin):
         template = 'sentry/emails/error.txt'
         html_template = 'sentry/emails/error.html'
 
-        rule = notification.rule
-        if rule:
+        rules = []
+        for rule in notification.rules:
             rule_link = reverse('sentry-edit-project-rule', args=[
                 group.organization.slug, project.slug, rule.id
             ])
-        else:
-            rule_link = None
+            rules.append((rule.label, rule_link))
 
         context = {
             'group': group,
@@ -167,12 +169,13 @@ class MailPlugin(NotificationPlugin):
             'tags': event.get_tags(),
             'link': link,
             'interfaces': interface_list,
-            'rule': rule,
+            'rules': rules,
         }
 
         headers = {
             'X-Sentry-Logger': group.logger,
             'X-Sentry-Logger-Level': group.get_level_display(),
+            'X-Sentry-Team': project.team.name,
             'X-Sentry-Project': project.name,
             'X-Sentry-Reply-To': group_id_to_email(group.id),
         }

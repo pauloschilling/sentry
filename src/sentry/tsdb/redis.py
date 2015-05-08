@@ -81,6 +81,9 @@ class RedisTSDB(BaseTSDB):
         # Redis, whereas long strings (say tag values) will store in a more
         # efficient hashed format.
         if not isinstance(key, six.integer_types):
+            # enforce utf-8 encoding
+            if isinstance(key, unicode):
+                key = key.encode('utf-8')
             return md5(repr(key)).hexdigest()
         return key
 
@@ -100,13 +103,14 @@ class RedisTSDB(BaseTSDB):
 
         with self.conn.map() as conn:
             for rollup, max_values in self.rollups:
-                norm_epoch = normalize_to_rollup(timestamp, rollup)
+                norm_rollup = normalize_to_rollup(timestamp, rollup)
+                expire = rollup * max_values
 
                 for model, key in items:
                     model_key = self.get_model_key(key)
-                    hash_key = make_key(model, norm_epoch, model_key)
+                    hash_key = make_key(model, norm_rollup, model_key)
                     conn.hincrby(hash_key, model_key, count)
-                    conn.expire(hash_key, rollup * max_values)
+                    conn.expire(hash_key, expire)
 
     def get_range(self, model, keys, start, end, rollup=None):
         """

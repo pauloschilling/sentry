@@ -7,6 +7,7 @@ sentry.models.organization
 """
 from __future__ import absolute_import, print_function
 
+from bitfield import BitField
 from django.conf import settings
 from django.db import models
 from django.utils import timezone
@@ -14,7 +15,8 @@ from django.utils.translation import ugettext_lazy as _
 
 from sentry.constants import RESERVED_ORGANIZATION_SLUGS
 from sentry.db.models import (
-    BaseManager, BoundedPositiveIntegerField, Model, sane_repr
+    BaseManager, BoundedPositiveIntegerField, FlexibleForeignKey, Model,
+    sane_repr
 )
 from sentry.db.models.utils import slugify_instance
 
@@ -50,12 +52,12 @@ class OrganizationManager(BaseManager):
         else:
             qs = OrganizationMember.objects.filter(
                 user=user,
+                organization__status=OrganizationStatus.VISIBLE,
             ).select_related('organization')
             if access is not None:
                 # if we're requesting specific access the member *must* have
                 # global access to teams
                 qs = qs.filter(
-                    organization__status=OrganizationStatus.VISIBLE,
                     type__lte=access,
                     has_global_access=True,
                 )
@@ -74,7 +76,7 @@ class Organization(Model):
     """
     name = models.CharField(max_length=64)
     slug = models.SlugField(unique=True)
-    owner = models.ForeignKey(settings.AUTH_USER_MODEL)
+    owner = FlexibleForeignKey(settings.AUTH_USER_MODEL)
     status = BoundedPositiveIntegerField(choices=(
         (OrganizationStatus.VISIBLE, _('Visible')),
         (OrganizationStatus.PENDING_DELETION, _('Pending Deletion')),
@@ -82,6 +84,10 @@ class Organization(Model):
     ), default=OrganizationStatus.VISIBLE)
     date_added = models.DateTimeField(default=timezone.now)
     members = models.ManyToManyField(settings.AUTH_USER_MODEL, through='sentry.OrganizationMember', related_name='org_memberships')
+
+    flags = BitField(flags=(
+        ('allow_joinleave', 'Allow members to join and leave teams without requiring approval.'),
+    ), default=0)
 
     objects = OrganizationManager(cache_fields=(
         'pk',
@@ -102,9 +108,17 @@ class Organization(Model):
             slugify_instance(self, self.name, reserved=RESERVED_ORGANIZATION_SLUGS)
         super(Organization, self).save(*args, **kwargs)
 
+    def has_access(self, user, access=None):
+        queryset = self.member_set.filter(user=user)
+        if access is not None:
+            queryset = queryset.filter(type__lte=access)
+
+        return queryset.exists()
+
     def get_audit_log_data(self):
         return {
             'slug': self.slug,
             'name': self.name,
             'status': self.status,
+            'flags': self.flags,
         }

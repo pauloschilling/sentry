@@ -69,9 +69,8 @@ TIMEZONE_CHOICES = _get_timezone_choices()
 
 
 class AuthenticationForm(CaptchaForm):
-    username = forms.CharField(
-        label=_('Username or email'), max_length=128)
-    password = forms.CharField(label=_("Password"), widget=forms.PasswordInput)
+    username = forms.CharField(label=_('Account'), max_length=128)
+    password = forms.CharField(label=_('Password'), widget=forms.PasswordInput)
 
     error_messages = {
         'invalid_login': _("Please enter a correct %(username)s and password. "
@@ -97,6 +96,12 @@ class AuthenticationForm(CaptchaForm):
         self.username_field = UserModel._meta.get_field(UserModel.USERNAME_FIELD)
         if not self.fields['username'].label:
             self.fields['username'].label = capfirst(self.username_field.verbose_name)
+
+    def clean_username(self):
+        value = (self.cleaned_data.get('username') or '').strip()
+        if not value:
+            return
+        return value.lower()
 
     def clean(self):
         username = self.cleaned_data.get('username')
@@ -140,7 +145,7 @@ class RegistrationForm(CaptchaModelForm):
         model = User
 
     def clean_username(self):
-        value = self.cleaned_data.get('username')
+        value = (self.cleaned_data.get('username') or '').strip()
         if not value:
             return
         if User.objects.filter(username__iexact=value).exists():
@@ -160,15 +165,15 @@ class RecoverPasswordForm(CaptchaForm):
     user = forms.CharField(label=_('Username or email'))
 
     def clean_user(self):
-        value = self.cleaned_data.get('user')
-        if value:
-            users = find_users(value, with_valid_password=False)
-            if not users:
-                raise forms.ValidationError(_("We were unable to find a matching user."))
-            if len(users) > 1:
-                raise forms.ValidationError(_("Multiple accounts were found matching this email address."))
-            return users[0]
-        return None
+        value = (self.cleaned_data.get('user') or '').strip()
+        if not value:
+            return
+        users = find_users(value, with_valid_password=False)
+        if not users:
+            raise forms.ValidationError(_("We were unable to find a matching user."))
+        if len(users) > 1:
+            raise forms.ValidationError(_("Multiple accounts were found matching this email address."))
+        return users[0]
 
 
 class ChangePasswordRecoverForm(forms.Form):
@@ -178,12 +183,14 @@ class ChangePasswordRecoverForm(forms.Form):
 class NotificationSettingsForm(forms.Form):
     alert_email = forms.EmailField(help_text=_('Designate an alternative email address to send email notifications to.'), required=False)
     subscribe_by_default = forms.ChoiceField(
+        label=_('Alerts'),
         choices=(
             ('1', _('Automatically subscribe to notifications for new projects')),
             ('0', _('Do not subscribe to notifications for new projects')),
         ), required=False,
         widget=forms.Select(attrs={'class': 'input-xxlarge'}))
     subscribe_notes = forms.ChoiceField(
+        label=_('Notes'),
         choices=(
             ('1', _('Get notified about new notes')),
             ('0', _('Do not subscribe to note notifications')),

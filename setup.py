@@ -21,6 +21,7 @@ any application.
 :copyright: (c) 2011-2014 by the Sentry Team, see AUTHORS for more details.
 :license: BSD, see LICENSE for more details.
 """
+from __future__ import absolute_import
 
 import os.path
 
@@ -49,55 +50,58 @@ dev_requires = [
 ]
 
 tests_require = [
+    'blist',  # used by cassandra
     'casscache',
     'cqlsh',
     'elasticsearch',
-    'exam>=0.5.1',
-    'eventlet',
     'httpretty',
-    'pytest',
     'pytest-cov>=1.4',
-    'pytest-django',
     'pytest-timeout',
     'python-coveralls',
-    'mock>=0.8.0',
+    'responses',
     'riak',
-    'unittest2',
 ]
 
 
 install_requires = [
     'BeautifulSoup>=3.2.1,<3.3.0',
-    'celery>=3.0.15,<3.1.0',
+    'celery>=3.1.8,<3.2.0',
     'cssutils>=0.9.9,<0.10.0',
     'Django>=1.6.0,<1.7',
     'django-bitfield>=1.7.0,<1.8.0',
-    'django-celery>=3.0.11,<3.1.0',
-    'django-crispy-forms>=1.2.3,<1.3.0',
+    'django-crispy-forms>=1.4.0,<1.5.0',
     'django-paging>=0.2.5,<0.3.0',
+    'django-jsonfield>=0.9.13,<0.10.0',
     'django-picklefield>=0.3.0,<0.4.0',
     'django-recaptcha>=1.0.0,<1.1.0',
     'django-social-auth>=0.7.28,<0.8.0',
-    'django-statsd-mozilla>=0.3.8.0,<0.3.9.0',
-    'django-sudo>=1.1.0,<1.2.0',
+    'django-statsd-mozilla>=0.3.14.0,<0.3.15.0',
+    'django-sudo>=1.1.3,<1.2.0',
     'django-templatetag-sugar>=0.1.0',
     'djangorestframework>=2.3.8,<2.4.0',
     'email-reply-parser>=0.2.0,<0.3.0',
     'enum34>=0.9.18,<0.10.0',
-    'gunicorn>=0.17.2,<0.18.0',
+    'exam>=0.5.1',
+    'gunicorn>=19.2.1,<20.0.0',
     'ipaddr>=2.1.11,<2.2.0',
-    'logan>=0.5.8.2,<0.6.0',
-    'nydus>=0.10.7,<0.11.0',
+    'logan>=0.7.1,<0.8.0',
+    'lxml>=3.4.1',
+    'mock>=0.8.0',
+    'nydus>=0.11.0,<0.12.0',
     'markdown>=2.4.1,<2.5.0',
     'progressbar>=2.2,<2.4',
     'Pygments>=1.6.0,<1.7.0',
-    'python-dateutil>=1.5.0,<2.0.0',
+    'pytest',
+    'pytest-django',
+    'python-dateutil>=2.0.0,<3.0.0',
     'python-memcached>=1.53,<2.0.0',
-    'raven>=5.0.0',
+    'raven>=5.3.0',
     'redis>=2.7.0,<2.11.0',
+    'requests[security]>=2.5.1,<2.6.0',
     'simplejson>=3.1.0,<3.4.0',
     'six>=1.6.0,<2.0.0',
     'setproctitle>=1.1.7,<1.2.0',
+    'statsd>=3.1.0,<3.2.0',
     'South==1.0.1',
     'toronado>=0.0.4,<0.1.0',
     'ua-parser>=0.3.5',
@@ -146,7 +150,7 @@ class BuildStatic(Command):
 
 setup(
     name='sentry',
-    version='7.0.0-DEV',
+    version='7.5.0.dev0',
     author='David Cramer',
     author_email='dcramer@gmail.com',
     url='https://www.getsentry.com',

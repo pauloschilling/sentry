@@ -140,7 +140,7 @@ def is_none(value):
 @register.simple_tag(takes_context=True)
 def get_sentry_version(context):
     import sentry
-    current = sentry.get_version()
+    current = sentry.VERSION
 
     latest = options.get('sentry:latest_version') or current
     update_available = Version(latest) > Version(current)
@@ -295,14 +295,9 @@ def get_project_dsn(context, user, project, asvar):
         return ''
 
     try:
-        key = ProjectKey.objects.filter(user=None, project=project)[0]
+        key = ProjectKey.objects.filter(project=project)[0]
     except ProjectKey.DoesNotExist:
-        try:
-            key = ProjectKey.objects.get(user=user, project=project)
-        except IndexError:
-            context[asvar] = None
-        else:
-            context[asvar] = key.get_dsn()
+        context[asvar] = None
     else:
         context[asvar] = key.get_dsn()
 
@@ -351,8 +346,8 @@ def render_tag_widget(group, tag):
     cutoff = timezone.now() - timedelta(days=7)
 
     return {
-        'title': tag.replace('_', ' ').title(),
-        'tag_name': tag,
+        'title': tag['label'],
+        'tag_name': tag['key'],
         'group': group,
     }
 
@@ -397,10 +392,12 @@ def github_button(user, repo):
 @register.inclusion_tag('sentry/partial/data_values.html')
 def render_values(value, threshold=5, collapse_to=3):
     if isinstance(value, (list, tuple)):
-        value = dict(enumerate(value))
+        value = list(enumerate(value))
         is_list, is_dict = bool(value), True
     else:
         is_list, is_dict = False, isinstance(value, dict)
+        if is_dict:
+            value = sorted(value.iteritems())
 
     context = {
         'is_dict': is_dict,
@@ -410,7 +407,6 @@ def render_values(value, threshold=5, collapse_to=3):
     }
 
     if is_dict:
-        value = sorted(value.iteritems())
         value_len = len(value)
         over_threshold = value_len > threshold
         if over_threshold:
@@ -464,7 +460,7 @@ def localized_datetime(context, dt, format='DATETIME_FORMAT'):
     request = context['request']
     timezone = getattr(request, 'timezone', None)
     if not timezone:
-        timezone = pytz.timezone(settings.TIME_ZONE)
+        timezone = pytz.timezone(settings.SENTRY_DEFAULT_TIME_ZONE)
 
     dt = dt.astimezone(timezone)
 
@@ -483,6 +479,7 @@ def needs_access_group_migration(user, organization):
     has_org_access_queryset = OrganizationMember.objects.filter(
         user=user,
         organization=organization,
+        has_global_access=True,
         type__lte=OrganizationMemberType.ADMIN,
     )
 
@@ -492,3 +489,12 @@ def needs_access_group_migration(user, organization):
     return AccessGroup.objects.filter(
         team__organization=organization
     ).exists()
+
+
+@register.filter
+def count_pending_access_requests(organization):
+    from sentry.models import OrganizationAccessRequest
+
+    return OrganizationAccessRequest.objects.filter(
+        team__organization=organization,
+    ).count()

@@ -7,13 +7,17 @@ sentry.models.grouptagvalue
 """
 from __future__ import absolute_import
 
-from django.db import models
+from datetime import timedelta
+from django.db import connections, models
+from django.db.models import Sum
 from django.utils import timezone
 
 from sentry.constants import MAX_TAG_KEY_LENGTH, MAX_TAG_VALUE_LENGTH
 from sentry.db.models import (
-    Model, BoundedPositiveIntegerField, BaseManager, sane_repr
+    Model, BoundedPositiveIntegerField, BaseManager, FlexibleForeignKey,
+    sane_repr
 )
+from sentry.utils import db
 
 
 class GroupTagValue(Model):
@@ -21,8 +25,8 @@ class GroupTagValue(Model):
     Stores the total number of messages seen by a group matching
     the given filter.
     """
-    project = models.ForeignKey('sentry.Project', null=True, related_name='grouptag')
-    group = models.ForeignKey('sentry.Group', related_name='grouptag')
+    project = FlexibleForeignKey('sentry.Project', null=True, related_name='grouptag')
+    group = FlexibleForeignKey('sentry.Group', related_name='grouptag')
     times_seen = BoundedPositiveIntegerField(default=0)
     key = models.CharField(max_length=MAX_TAG_KEY_LENGTH)
     value = models.CharField(max_length=MAX_TAG_VALUE_LENGTH)
@@ -44,6 +48,32 @@ class GroupTagValue(Model):
         if not self.first_seen:
             self.first_seen = self.last_seen
         super(GroupTag, self).save(*args, **kwargs)
+
+    @classmethod
+    def get_value_count(cls, group_id, key):
+        if db.is_postgres():
+            # This doesnt guarantee percentage is accurate, but it does ensure
+            # that the query has a maximum cost
+            cursor = connections['default'].cursor()
+            cursor.execute("""
+                SELECT SUM(t)
+                FROM (
+                    SELECT times_seen as t
+                    FROM sentry_messagefiltervalue
+                    WHERE group_id = %s
+                    AND key = %s
+                    AND last_seen > NOW() - INTERVAL '7 days'
+                    LIMIT 10000
+                ) as a
+            """, [group_id, key])
+            return cursor.fetchone()[0] or 0
+
+        cutoff = timezone.now() - timedelta(days=7)
+        return cls.objects.filter(
+            group=group_id,
+            key=key,
+            last_seen__gte=cutoff,
+        ).aggregate(t=Sum('times_seen'))['t']
 
 
 GroupTag = GroupTagValue

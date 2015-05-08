@@ -14,14 +14,15 @@ from django.db import models
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
-from sentry.db.models import BaseManager, Model
+from sentry.db.models import BaseManager, BaseModel, BoundedAutoField
 
 
 class UserManager(BaseManager, UserManager):
     pass
 
 
-class User(Model, AbstractBaseUser):
+class User(BaseModel, AbstractBaseUser):
+    id = BoundedAutoField(primary_key=True)
     username = models.CharField(_('username'), max_length=128, unique=True)
     first_name = models.CharField(_('first name'), max_length=30, blank=True)
     last_name = models.CharField(_('last name'), max_length=30, blank=True)
@@ -79,22 +80,18 @@ class User(Model, AbstractBaseUser):
     def merge_to(from_user, to_user):
         # TODO: we could discover relations automatically and make this useful
         from sentry.models import (
-            GroupBookmark, Organization, OrganizationMember, ProjectKey, Team,
+            GroupBookmark, Organization, OrganizationMember,
             UserOption
         )
 
         for obj in Organization.objects.filter(owner=from_user):
             obj.update(owner=to_user)
-        for obj in ProjectKey.objects.filter(user=from_user):
-            obj.update(user=to_user)
         for obj in OrganizationMember.objects.filter(user=from_user):
             obj.update(user=to_user)
-        for obj in Team.objects.filter(owner=from_user):
-            obj.update(owner=to_user)
         for obj in GroupBookmark.objects.filter(user=from_user):
             obj.update(user=to_user)
         for obj in UserOption.objects.filter(user=from_user):
             obj.update(user=to_user)
 
     def get_display_name(self):
-        return self.first_name or self.username
+        return self.first_name or self.email or self.username

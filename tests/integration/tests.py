@@ -8,7 +8,7 @@ import logging
 import mock
 import zlib
 
-from django.conf import settings as django_settings
+from django.conf import settings
 from django.core.urlresolvers import reverse
 from django.test.utils import override_settings
 from django.utils import timezone
@@ -82,10 +82,9 @@ class RavenIntegrationTest(TransactionTestCase):
     """
     def setUp(self):
         self.user = self.create_user('coreapi@example.com')
-        self.team = self.create_team(owner=self.user)
-        self.project = self.create_project(team=self.team)
+        self.project = self.create_project()
         self.pm = self.project.team.member_set.get_or_create(user=self.user)[0]
-        self.pk = self.project.key_set.get_or_create(user=self.user)[0]
+        self.pk = self.project.key_set.get_or_create()[0]
 
         self.configure_sentry_errors()
 
@@ -117,7 +116,7 @@ class RavenIntegrationTest(TransactionTestCase):
                 self.pk.public_key, self.pk.secret_key, self.pk.project_id)
         )
 
-        with self.settings(CELERY_ALWAYS_EAGER=True):
+        with self.tasks():
             client.capture('Message', message='foo')
 
         send_remote.assert_called_once()
@@ -215,7 +214,7 @@ class SentryRemoteTest(TestCase):
         key = self.projectkey.public_key
         secret = self.projectkey.secret_key
 
-        with self.settings(CELERY_ALWAYS_EAGER=True):
+        with self.tasks():
             resp = self.client.post(
                 self.path, message,
                 content_type='application/octet-stream',
@@ -246,7 +245,7 @@ class SentryRemoteTest(TestCase):
         key = self.projectkey.public_key
         secret = self.projectkey.secret_key
 
-        with self.settings(CELERY_ALWAYS_EAGER=True):
+        with self.tasks():
             resp = self.client.post(
                 self.path, fp.getvalue(),
                 content_type='application/octet-stream',
@@ -270,16 +269,16 @@ class DepdendencyTest(TestCase):
             raise ImportError("No module named %s" % (package,))
         return callable
 
-    @mock.patch('django.conf.settings')
+    @mock.patch('django.conf.settings', mock.Mock())
     @mock.patch('sentry.utils.settings.import_string')
     def validate_dependency(self, key, package, dependency_type, dependency,
-                            setting_value, import_string, settings):
+                            setting_value, import_string):
 
         import_string.side_effect = self.raise_import_error(package)
 
         with self.settings(**{key: setting_value}):
             with self.assertRaises(ConfigurationError):
-                validate_settings(django_settings)
+                validate_settings(settings)
 
     def test_validate_fails_on_postgres(self):
         self.validate_dependency(*DEPENDENCY_TEST_DATA['postgresql'])

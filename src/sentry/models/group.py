@@ -18,13 +18,13 @@ from django.db import models
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
-from sentry.app import buffer, tsdb
+from sentry.app import buffer
 from sentry.constants import (
-    LOG_LEVELS, MAX_CULPRIT_LENGTH, MAX_TAG_VALUE_LENGTH
+    DEFAULT_LOGGER_NAME, LOG_LEVELS, MAX_CULPRIT_LENGTH
 )
 from sentry.db.models import (
-    BaseManager, BoundedIntegerField, BoundedPositiveIntegerField, Model,
-    GzippedDictField, sane_repr
+    BaseManager, BoundedIntegerField, BoundedPositiveIntegerField,
+    FlexibleForeignKey, Model, GzippedDictField, sane_repr
 )
 from sentry.utils.http import absolute_uri
 from sentry.utils.strings import truncatechars, strip
@@ -53,10 +53,8 @@ class GroupManager(BaseManager):
     def add_tags(self, group, tags):
         from sentry.models import TagValue, GroupTagValue
 
-        project = group.project
+        project_id = group.project_id
         date = group.last_seen
-
-        tsdb_keys = []
 
         for tag_item in tags:
             if len(tag_item) == 2:
@@ -64,23 +62,10 @@ class GroupManager(BaseManager):
             else:
                 key, value, data = tag_item
 
-            if not value:
-                continue
-
-            value = six.text_type(value)
-            if len(value) > MAX_TAG_VALUE_LENGTH:
-                continue
-
-            tsdb_id = u'%s=%s' % (key, value)
-
-            tsdb_keys.extend([
-                (tsdb.models.project_tag_value, tsdb_id),
-            ])
-
             buffer.incr(TagValue, {
                 'times_seen': 1,
             }, {
-                'project': project,
+                'project_id': project_id,
                 'key': key,
                 'value': value,
             }, {
@@ -91,25 +76,22 @@ class GroupManager(BaseManager):
             buffer.incr(GroupTagValue, {
                 'times_seen': 1,
             }, {
-                'group': group,
-                'project': project,
+                'group_id': group.id,
+                'project_id': project_id,
                 'key': key,
                 'value': value,
             }, {
                 'last_seen': date,
             })
 
-        if tsdb_keys:
-            tsdb.incr_multi(tsdb_keys)
-
 
 class Group(Model):
     """
     Aggregated message which summarizes a set of Events.
     """
-    project = models.ForeignKey('sentry.Project', null=True)
+    project = FlexibleForeignKey('sentry.Project', null=True)
     logger = models.CharField(
-        max_length=64, blank=True, default='root', db_index=True)
+        max_length=64, blank=True, default=DEFAULT_LOGGER_NAME, db_index=True)
     level = BoundedPositiveIntegerField(
         choices=LOG_LEVELS.items(), default=logging.ERROR, blank=True,
         db_index=True)
@@ -229,16 +211,41 @@ class Group(Model):
         ).order_by(order_by)
 
     def get_tags(self, with_internal=True):
-        from sentry.models import GroupTagKey
-
+        from sentry.models import GroupTagKey, TagKey
         if not hasattr(self, '_tag_cache'):
-            self._tag_cache = sorted([
-                t for t in GroupTagKey.objects.filter(
-                    group=self,
+            group_tags = GroupTagKey.objects.filter(
+                group=self,
+                project=self.project,
+            )
+            if not with_internal:
+                group_tags = group_tags.exclude(key__startswith='sentry:')
+
+            group_tags = list(group_tags.values_list('key', flat=True))
+
+            tag_keys = dict(
+                (t.key, t)
+                for t in TagKey.objects.filter(
                     project=self.project,
-                ).values_list('key', flat=True)
-                if with_internal or not t.startswith('sentry:')
-            ])
+                    key__in=group_tags
+                )
+            )
+
+            results = []
+            for key in group_tags:
+                try:
+                    tag_key = tag_keys[key]
+                except KeyError:
+                    label = key.replace('_', ' ').title()
+                else:
+                    label = tag_key.get_label()
+
+                results.append({
+                    'key': key,
+                    'label': label,
+                })
+
+            self._tag_cache = sorted(results, key=lambda x: x['label'])
+
         return self._tag_cache
 
     def error(self):

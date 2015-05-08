@@ -21,8 +21,10 @@ from uuid import uuid4
 
 from sentry.app import buffer, tsdb
 from sentry.constants import (
-    LOG_LEVELS, DEFAULT_LOGGER_NAME, MAX_CULPRIT_LENGTH
+    CLIENT_RESERVED_ATTRS, LOG_LEVELS, DEFAULT_LOGGER_NAME, MAX_CULPRIT_LENGTH,
+    MAX_TAG_VALUE_LENGTH
 )
+from sentry.interfaces.base import get_interface
 from sentry.models import (
     Event, EventMapping, Group, GroupHash, GroupStatus, Project
 )
@@ -62,7 +64,7 @@ def md5_from_hash(hash_bits):
 def get_hashes_for_event(event):
     interfaces = event.interfaces
     for interface in interfaces.itervalues():
-        result = interface.compute_hashes()
+        result = interface.compute_hashes(event.platform)
         if not result:
             continue
         return map(md5_from_hash, result)
@@ -70,17 +72,17 @@ def get_hashes_for_event(event):
 
 
 if not settings.SENTRY_SAMPLE_DATA:
-    def should_sample(group, event):
+    def should_sample(current_datetime, last_seen, times_seen):
         return False
 else:
-    def should_sample(group, event):
-        silence_timedelta = event.datetime - group.last_seen
+    def should_sample(current_datetime, last_seen, times_seen):
+        silence_timedelta = current_datetime - last_seen
         silence = silence_timedelta.days * 86400 + silence_timedelta.seconds
 
-        if group.times_seen % count_limit(group.times_seen):
+        if times_seen % count_limit(times_seen) == 0:
             return False
 
-        if group.times_seen % time_limit(silence):
+        if times_seen % time_limit(silence) == 0:
             return False
 
         return True
@@ -89,7 +91,8 @@ else:
 def plugin_is_regression(group, event):
     project = event.project
     for plugin in plugins.for_project(project):
-        result = safe_execute(plugin.is_regression, group, event, _with_transaction=False)
+        result = safe_execute(plugin.is_regression, group, event,
+                              version=1, _with_transaction=False)
         if result is not None:
             return result
     return True
@@ -128,6 +131,8 @@ class ScoreClause(object):
 
 
 class EventManager(object):
+    logger = logging.getLogger('sentry.events')
+
     def __init__(self, data, version='5'):
         self.data = data
         self.version = version
@@ -136,8 +141,6 @@ class EventManager(object):
         # TODO(dcramer): store http.env.REMOTE_ADDR as user.ip
         # First we pull out our top-level (non-data attr) kwargs
         data = self.data
-
-        data['version'] = self.version
 
         if not isinstance(data.get('level'), (six.string_types, int)):
             data['level'] = logging.ERROR
@@ -192,7 +195,16 @@ class EventManager(object):
         else:
             tags = list(tags)
 
-        data['tags'] = tags
+        data['tags'] = []
+        for key, value in tags:
+            key = six.text_type(key).strip()
+            value = six.text_type(value).strip()
+            if not (key and value):
+                continue
+
+            if len(value) > MAX_TAG_VALUE_LENGTH:
+                continue
+            data['tags'].append((key, value))
 
         if not isinstance(data['extra'], dict):
             # throw it away
@@ -200,6 +212,26 @@ class EventManager(object):
 
         trim_dict(
             data['extra'], max_size=settings.SENTRY_MAX_EXTRA_VARIABLE_SIZE)
+
+        # TODO(dcramer): more of validate data needs stuffed into the manager
+        for key in data.keys():
+            if key in CLIENT_RESERVED_ATTRS:
+                continue
+
+            value = data.pop(key)
+
+            try:
+                interface = get_interface(key)()
+            except ValueError:
+                continue
+
+            try:
+                inst = interface.to_python(value)
+                data[inst.get_path()] = inst.to_json()
+            except Exception:
+                pass
+
+        data['version'] = self.version
 
         # TODO(dcramer): find a better place for this logic
         exception = data.get('sentry.interfaces.Exception')
@@ -212,6 +244,9 @@ class EventManager(object):
             # default the culprit to the url
             if not data['culprit']:
                 data['culprit'] = data['sentry.interfaces.Http']['url']
+
+        if data['time_spent']:
+            data['time_spent'] = int(data['time_spent'])
 
         if data['culprit']:
             data['culprit'] = trim(data['culprit'], MAX_CULPRIT_LENGTH)
@@ -293,29 +328,26 @@ class EventManager(object):
             # TODO(dcramer): we should ensure we create Release objects
             tags.append(('sentry:release', release))
 
-        for plugin in plugins.for_project(project):
-            added_tags = safe_execute(plugin.get_tags, event)
+        for plugin in plugins.for_project(project, version=None):
+            added_tags = safe_execute(plugin.get_tags, event,
+                                      _with_transaction=False)
             if added_tags:
                 tags.extend(added_tags)
 
-        result = safe_execute(
+        group, is_new, is_regression, is_sample = safe_execute(
             self._save_aggregate,
             event=event,
             tags=tags,
             hashes=hashes,
             **group_kwargs
         )
-        if result is None:
-            return
-
-        group, is_new, is_regression, is_sample = result
 
         using = group._state.db
 
         event.group = group
 
-        # Rounded down to the nearest interval
-        safe_execute(Group.objects.add_tags, group, tags)
+        safe_execute(Group.objects.add_tags, group, tags,
+                     _with_transaction=False)
 
         # save the event unless its been sampled
         if not is_sample:
@@ -323,6 +355,7 @@ class EventManager(object):
                 with transaction.atomic():
                     event.save()
             except IntegrityError:
+                self.logger.info('Duplicate Event found for event_id=%s', event_id)
                 return event
 
         try:
@@ -330,6 +363,7 @@ class EventManager(object):
                 EventMapping.objects.create(
                     project=project, group=group, event_id=event_id)
         except IntegrityError:
+            self.logger.info('Duplicate EventMapping found for event_id=%s', event_id)
             return event
 
         if not raw:
@@ -340,6 +374,8 @@ class EventManager(object):
                 is_sample=is_sample,
                 is_regression=is_regression,
             )
+        else:
+            self.logger.info('Raw event passed; skipping post process for event_id=%s', event_id)
 
         index_event.delay(event)
 
@@ -429,14 +465,9 @@ class EventManager(object):
             elif group_is_new and len(new_hashes) == len(all_hashes):
                 is_new = True
 
-        update_kwargs = {
-            'times_seen': 1,
-        }
-        if time_spent:
-            update_kwargs.update({
-                'time_spent_total': time_spent,
-                'time_spent_count': 1,
-            })
+        # XXX(dcramer): it's important this gets called **before** the aggregate
+        # is processed as otherwise values like last_seen will get mutated
+        can_sample = should_sample(event.datetime, group.last_seen, group.times_seen)
 
         if not is_new:
             is_regression = self._process_existing_aggregate(group, event, kwargs)
@@ -444,12 +475,10 @@ class EventManager(object):
             is_regression = False
 
         # Determine if we've sampled enough data to store this event
-        if is_new:
-            is_sample = False
-        elif not should_sample(group, event):
+        if is_new or is_regression:
             is_sample = False
         else:
-            is_sample = True
+            is_sample = can_sample
 
         tsdb.incr_multi([
             (tsdb.models.group, group.id),
@@ -481,8 +510,13 @@ class EventManager(object):
             ).exclude(
                 # add to the regression window to account for races here
                 active_at__gte=date - timedelta(seconds=5),
-            ).update(active_at=date, status=GroupStatus.UNRESOLVED))
-
+            ).update(
+                active_at=date,
+                # explicitly set last_seen here as ``is_resolved()`` looks
+                # at the value
+                last_seen=date,
+                status=GroupStatus.UNRESOLVED
+            ))
             group.active_at = date
             group.status = GroupStatus.UNRESOLVED
 

@@ -27,13 +27,11 @@ class CreateDefaultProjectsTest(TestCase):
         assert project.name == 'Backend'
         assert project.slug == 'backend'
         team = project.team
-        assert team.owner == user
         assert team.slug == 'sentry'
 
         pk = ProjectKey.objects.get(project=project)
         assert not pk.roles.api
         assert pk.roles.store
-        assert pk.user is None
 
         # ensure that we dont hit an error here
         create_default_projects(created_models=[Project])
@@ -52,13 +50,11 @@ class CreateDefaultProjectsTest(TestCase):
         assert project.name == 'Backend'
         assert project.slug == 'backend'
         team = project.team
-        assert team.owner == user
         assert team.slug == 'sentry'
 
         pk = ProjectKey.objects.get(project=project)
         assert not pk.roles.api
         assert pk.roles.store
-        assert pk.user is None
 
         # ensure that we dont hit an error here
         create_default_projects(created_models=[Project])

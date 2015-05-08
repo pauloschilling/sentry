@@ -1,9 +1,13 @@
 from __future__ import absolute_import, print_function
 
+import logging
+
 from django.conf import settings
 from django.contrib.auth.signals import user_logged_in
 from django.db import connections
+from django.db.utils import OperationalError
 from django.db.models.signals import post_syncdb, post_save
+from functools import wraps
 from pkg_resources import parse_version as Version
 
 from sentry import options
@@ -13,6 +17,7 @@ from sentry.models import (
     Alert
 )
 from sentry.signals import buffer_incr_complete, regression_signal
+from sentry.utils import db
 from sentry.utils.safe import safe_execute
 
 PROJECT_SEQUENCE_FIX = """
@@ -20,6 +25,17 @@ SELECT setval('sentry_project_id_seq', (
     SELECT GREATEST(MAX(id) + 1, nextval('sentry_project_id_seq')) - 1
     FROM sentry_project))
 """
+
+
+def handle_db_failure(func):
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except OperationalError:
+            logging.exception('Failed processing signal %s', func.__name__)
+            return
+    return wrapped
 
 
 def create_default_projects(created_models, verbosity=2, **kwargs):
@@ -33,6 +49,7 @@ def create_default_projects(created_models, verbosity=2, **kwargs):
         verbosity=verbosity,
         platform='django',
     )
+
     if settings.SENTRY_FRONTEND_PROJECT:
         project = create_default_project(
             id=settings.SENTRY_FRONTEND_PROJECT,
@@ -58,17 +75,18 @@ def create_default_project(id, name, slug, verbosity=2, **kwargs):
         )
 
     org, _ = Organization.objects.get_or_create(
-        name='Sentry',
+        slug='sentry',
         defaults={
             'owner': user,
+            'name': 'Sentry',
         }
     )
 
     team, _ = Team.objects.get_or_create(
-        name='Sentry',
+        organization=org,
+        slug='sentry',
         defaults={
-            'owner': org.owner,
-            'organization': org,
+            'name': 'Sentry',
         }
     )
 
@@ -84,8 +102,8 @@ def create_default_project(id, name, slug, verbosity=2, **kwargs):
 
     # HACK: manually update the ID after insert due to Postgres
     # sequence issues. Seriously, fuck everything about this.
-    connection = connections[project._state.db]
-    if connection.settings_dict['ENGINE'].endswith('psycopg2'):
+    if db.is_postgres(project._state.db):
+        connection = connections[project._state.db]
         cursor = connection.cursor()
         cursor.execute(PROJECT_SEQUENCE_FIX)
 
@@ -99,13 +117,16 @@ def create_default_project(id, name, slug, verbosity=2, **kwargs):
 
 def set_sentry_version(latest=None, **kwargs):
     import sentry
-    current = sentry.get_version()
+    current = sentry.VERSION
 
     version = options.get('sentry:latest_version')
 
     for ver in (current, version):
         if Version(ver) >= Version(latest):
-            return
+            latest = ver
+
+    if latest == version:
+        return
 
     options.set('sentry:latest_version', (latest or current))
 
@@ -114,9 +135,10 @@ def create_keys_for_project(instance, created, **kwargs):
     if not created or kwargs.get('raw'):
         return
 
-    if not ProjectKey.objects.filter(project=instance, user__isnull=True).exists():
+    if not ProjectKey.objects.filter(project=instance).exists():
         ProjectKey.objects.create(
             project=instance,
+            label='Default',
         )
 
 
@@ -153,10 +175,15 @@ def record_project_tag_count(filters, created, **kwargs):
     if not created:
         return
 
+    # TODO(dcramer): remove in 7.6.x
+    project_id = filters.get('project_id')
+    if not project_id:
+        project_id = filters['project'].id
+
     app.buffer.incr(TagKey, {
         'values_seen': 1,
     }, {
-        'project': filters['project'],
+        'project_id': project_id,
         'key': filters['key'],
     })
 
@@ -168,11 +195,20 @@ def record_group_tag_count(filters, created, **kwargs):
     if not created:
         return
 
+    # TODO(dcramer): remove in 7.6.x
+    project_id = filters.get('project_id')
+    if not project_id:
+        project_id = filters['project'].id
+
+    group_id = filters.get('group_id')
+    if not group_id:
+        group_id = filters['group'].id
+
     app.buffer.incr(GroupTagKey, {
         'values_seen': 1,
     }, {
-        'project': filters['project'],
-        'group': filters['group'],
+        'project_id': project_id,
+        'group_id': group_id,
         'key': filters['key'],
     })
 
@@ -196,20 +232,21 @@ def on_alert_creation(instance, **kwargs):
         safe_execute(plugin.on_alert, alert=instance)
 
 
-# Signal registration
+# Anything that relies on default objects that may not exist with default
+# fields should be wrapped in handle_db_failure
 post_syncdb.connect(
-    create_default_projects,
+    handle_db_failure(create_default_projects),
     dispatch_uid="create_default_project",
     weak=False,
 )
 post_save.connect(
-    create_keys_for_project,
+    handle_db_failure(create_keys_for_project),
     sender=Project,
     dispatch_uid="create_keys_for_project",
     weak=False,
 )
 post_save.connect(
-    create_org_member_for_owner,
+    handle_db_failure(create_org_member_for_owner),
     sender=Organization,
     dispatch_uid="create_org_member_for_owner",
     weak=False,

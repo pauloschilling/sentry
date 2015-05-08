@@ -38,7 +38,7 @@ from sentry.coreapi import (
     project_from_auth_vars, decode_and_decompress_data,
     safely_load_json_string, validate_data, insert_data_to_database, APIError,
     APIForbidden, APIRateLimited, extract_auth_vars, ensure_has_ip,
-    decompress_deflate, decompress_gzip)
+    decompress_deflate, decompress_gzip, ensure_does_not_have_ip)
 from sentry.exceptions import InvalidData, InvalidOrigin, InvalidRequest
 from sentry.event_manager import EventManager
 from sentry.models import (
@@ -48,7 +48,7 @@ from sentry.models import (
 from sentry.signals import event_received
 from sentry.plugins import plugins
 from sentry.quotas.base import RateLimit
-from sentry.utils import json
+from sentry.utils import json, metrics
 from sentry.utils.data_scrubber import SensitiveDataFilter
 from sentry.utils.db import get_db_engine
 from sentry.utils.javascript import to_json
@@ -58,14 +58,13 @@ from sentry.web.decorators import has_access
 from sentry.web.frontend.groups import _get_group_list
 from sentry.web.helpers import render_to_response
 
-error_logger = logging.getLogger('sentry.errors')
 logger = logging.getLogger('sentry.api')
 
 # Transparent 1x1 gif
 # See http://probablyprogramming.com/2009/03/15/the-tiniest-gif-ever
 PIXEL = 'R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='.decode('base64')
 
-PROTOCOL_VERSIONS = frozenset(('2.0', '3', '4', '5'))
+PROTOCOL_VERSIONS = frozenset(('2.0', '3', '4', '5', '6'))
 
 
 def api(func):
@@ -206,12 +205,9 @@ class APIView(BaseView):
                 raise InvalidRequest(str(e))
 
             try:
-                project_, user = project_from_auth_vars(auth_vars)
+                project_ = project_from_auth_vars(auth_vars)
             except APIError as error:
                 return HttpResponse(six.text_type(error.msg), status=error.http_status)
-            else:
-                if user:
-                    request.user = user
 
             # Legacy API was /api/store/ and the project ID was only available elsewhere
             if not project:
@@ -312,10 +308,13 @@ class StoreView(APIView):
         return response
 
     def process(self, request, project, auth, data, **kwargs):
+        metrics.incr('events.total', 1)
+
         event_received.send_robust(ip=request.META['REMOTE_ADDR'], sender=type(self))
 
         # TODO: improve this API (e.g. make RateLimit act on __ne__)
-        rate_limit = safe_execute(app.quotas.is_rate_limited, project=project)
+        rate_limit = safe_execute(app.quotas.is_rate_limited, project=project,
+                                  _with_transaction=False)
         if isinstance(rate_limit, bool):
             rate_limit = RateLimit(is_limited=rate_limit, retry_after=None)
 
@@ -326,6 +325,7 @@ class StoreView(APIView):
                 (app.tsdb.models.organization_total_received, project.organization_id),
                 (app.tsdb.models.organization_total_rejected, project.organization_id),
             ])
+            metrics.incr('events.dropped', 1)
             raise APIRateLimited(rate_limit.retry_after)
         else:
             app.tsdb.incr_multi([
@@ -333,8 +333,10 @@ class StoreView(APIView):
                 (app.tsdb.models.organization_total_received, project.organization_id),
             ])
 
-        result = plugins.first('has_perm', request.user, 'create_event', project)
+        result = plugins.first('has_perm', request.user, 'create_event', project,
+                               version=1)
         if result is False:
+            metrics.incr('events.dropped', 1)
             raise APIForbidden('Creation of this event was blocked')
 
         content_encoding = request.META.get('HTTP_CONTENT_ENCODING', '')
@@ -357,8 +359,10 @@ class StoreView(APIView):
         manager = EventManager(data, version=auth.version)
         data = manager.normalize()
 
+        scrub_ip_address = project.get_option('sentry:scrub_ip_address', False)
+
         # insert IP address if not available
-        if auth.is_public:
+        if auth.is_public and not scrub_ip_address:
             ensure_has_ip(data, request.META['REMOTE_ADDR'])
 
         event_id = data['event_id']
@@ -373,8 +377,12 @@ class StoreView(APIView):
 
         if project.get_option('sentry:scrub_data', True):
             # We filter data immediately before it ever gets into the queue
-            inst = SensitiveDataFilter()
+            inst = SensitiveDataFilter(project.get_option('sentry:sensitive_fields', None))
             inst.apply(data)
+
+        if scrub_ip_address:
+            # We filter data immediately before it ever gets into the queue
+            ensure_does_not_have_ip(data)
 
         # mutates data (strips a lot of context if not queued)
         insert_data_to_database(data)
@@ -425,6 +433,7 @@ def poll(request, organization, project):
             uri=base_url,
             cursor=cursor,
             name=name,
+            has_results='true' if bool(cursor) else 'false',
         ))
 
     headers = {}
@@ -656,9 +665,34 @@ def get_group_tags(request, organization, project, group_id, tag_name):
         last_seen__gte=cutoff,
     ).values_list('value', 'times_seen').order_by('-times_seen')[:10]
 
+    # fetch TagValue instances so we can get proper labels
+    tag_values = dict(
+        (t.value, t)
+        for t in TagValue.objects.filter(
+            key=tag_name,
+            project_id=project.id,
+            value__in=[u[0] for u in unique_tags],
+        )
+    )
+
+    values = []
+    for tag, times_seen in unique_tags:
+        try:
+            tag_value = tag_values[tag]
+        except KeyError:
+            label = tag
+        else:
+            label = tag_value.get_label()
+
+        values.append({
+            'value': tag,
+            'count': times_seen,
+            'label': label,
+        })
+
     return json.dumps({
         'name': tag_name,
-        'values': list(unique_tags),
+        'values': values,
         'total': total,
     })
 
@@ -933,12 +967,11 @@ def crossdomain_xml_index(request):
 
 @cache_control(max_age=60)
 def crossdomain_xml(request, project_id):
-    if project_id.isdigit():
-        lookup = {'id': project_id}
-    else:
-        lookup = {'slug': project_id}
+    if not project_id.isdigit():
+        return HttpResponse(status=404)
+
     try:
-        project = Project.objects.get_from_cache(**lookup)
+        project = Project.objects.get_from_cache(id=project_id)
     except Project.DoesNotExist:
         return HttpResponse(status=404)
 

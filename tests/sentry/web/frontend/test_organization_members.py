@@ -35,13 +35,13 @@ class OrganizationMembersTest(TestCase):
             user=owner,
         )
 
-        member_om = OrganizationMember.objects.create(
+        member_om = self.create_member(
             organization=organization,
             user=member,
             type=OrganizationMemberType.MEMBER,
             has_global_access=False,
+            teams=[team_2],
         )
-        member_om.teams.add(team_2)
 
         path = reverse('sentry-organization-members', args=[organization.slug])
 
@@ -57,6 +57,6 @@ class OrganizationMembersTest(TestCase):
         member_list = sorted(resp.context['member_list'], key=lambda x: x[0].id)
 
         assert member_list == [
-            (owner_om, []),
-            (member_om, [team_2]),
+            (owner_om, [], False),
+            (member_om, [team_2], False),
         ]

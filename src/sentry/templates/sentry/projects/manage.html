@@ -2,6 +2,7 @@
 
 {% load crispy_forms_tags %}
 {% load i18n %}
+{% load sentry_features %}
 {% load sentry_helpers %}
 {% load sentry_plugins %}
 
@@ -32,6 +33,8 @@
                 <div><legend>{% trans "Event Settings" %}</legend></div>
                 {{ form.resolve_age|as_crispy_field }}
                 {{ form.scrub_data|as_crispy_field }}
+                {{ form.sensitive_fields|as_crispy_field }}
+                {{ form.scrub_ip_address|as_crispy_field }}
                 {% if form.public %}
                     {{ form.public|as_crispy_field }}
                 {% endif %}
@@ -43,13 +46,18 @@
                     <p>{% blocktrans %}This will restrict requests based on the <code>Origin</code> and <code>Referer</code> headers.{% endblocktrans %}</p>
                     {{ field|as_crispy_field }}
                 {% endwith %}
+                {{ form.token|as_crispy_field }}
             </fieldset>
             <div class="form-actions">
                 <button type="submit" class="btn btn-primary">{% trans "Save Changes" %}</button>
-                {% if not project.is_internal_project %}
-                    <a href="{% url 'sentry-remove-project' project.organization.slug project.slug %}" class="btn btn-danger">{% trans "Remove Project" %}</a>
+                {% if ACCESS.project_delete %}
+                    {% if not project.is_internal_project %}
+                        <a href="{% url 'sentry-remove-project' project.organization.slug project.slug %}" class="btn btn-danger">{% trans "Remove Project" %}</a>
+                    {% else %}
+                        <a class="btn btn-danger disabled tip" title="{% trans "This project cannot be removed. It is used internally by the Sentry server." %}">{% trans "Remove Project" %}</a>
+                    {% endif %}
                 {% else %}
-                    <p class="pull-right">{% trans "This project cannot be removed. It is used internally by the Sentry server." %}</p>
+                    <a class="btn btn-danger disabled tip" title="{% trans "You do not have the required permission to remove this project." %}">{% trans "Remove Project" %}</a>
                 {% endif %}
             </div>
         </form>
@@ -70,9 +78,11 @@
         <li{% if page == 'notifications' %} class="active"{% endif %}>
             <a href="{% url 'sentry-project-notifications' project.organization.slug project.slug %}">{% trans "Notifications" %}</a>
         </li>
+        {% feature projects:quotas project %}
         <li{% if page == 'quotas' %} class="active"{% endif %}>
             <a href="{% url 'sentry-manage-project-quotas' project.organization.slug project.slug %}">{% trans "Rate Limits" %}</a>
         </li>
+        {% endfeature %}
         <li{% if page == 'rules' %} class="active"{% endif %}>
             <a href="{% url 'sentry-project-rules' project.organization.slug project.slug %}">{% trans "Rules" %}</a>
         </li>
@@ -80,20 +90,22 @@
             <a href="{% url 'sentry-manage-project-tags' project.organization.slug project.slug %}">{% trans "Tags" %}</a>
         </li>
         <li{% if page == 'keys' %} class="active"{% endif %}>
-            <a href="{% url 'sentry-manage-project-keys' project.organization.slug project.slug %}">{% trans "API Keys" %}</a>
+            <a href="{% url 'sentry-manage-project-keys' project.organization.slug project.slug %}">{% trans "Client Keys" %}</a>
         </li>
-    </ul>
+        <li class="nav-header">{% trans "Help" %}</li>
+        <li>
+            <a href="{% url 'sentry-help-platform-list' %}?pid={{ project.id }}">{% trans "Setup &amp; Installation" %}</a>
+        </li>
     {% with project|get_plugins as plugins %}
-        <ul class="nav nav-list">
-            <li class="nav-header">{% trans "Integrations" %}</li>
-            <li class="{% if page == 'plugins' %} active{% endif %}">
-                <a href="{% url 'sentry-manage-project-plugins' project.organization.slug project.slug %}">{% trans "Manage Integrations" %} ({{ PLUGINS|length }})</a>
+        <li class="nav-header">{% trans "Integrations" %}</li>
+        <li class="{% if page == 'plugins' %} active{% endif %}">
+            <a href="{% url 'sentry-manage-project-plugins' project.organization.slug project.slug %}">{% trans "Manage Integrations" %} ({{ PLUGINS|length }})</a>
+        </li>
+        {% for p in plugins %}
+            <li{% if page == 'plugin' and plugin.slug == p.slug %} class="active"{% endif %}>
+                <a href="{% url 'sentry-configure-project-plugin' project.organization.slug project.slug p.slug %}">{{ p.get_title }}</a>
             </li>
-            {% for p in plugins %}
-                <li{% if page == 'plugin' and plugin.slug == p.slug %} class="active"{% endif %}>
-                    <a href="{% url 'sentry-configure-project-plugin' project.organization.slug project.slug p.slug %}">{{ p.get_title }}</a>
-                </li>
-            {% endfor %}
-        </ul>
+        {% endfor %}
     {% endwith %}
+    </ul>
 {% endblock %}

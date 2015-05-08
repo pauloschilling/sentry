@@ -8,8 +8,10 @@ sentry.testutils.cases
 
 from __future__ import absolute_import
 
-__all__ = ('TestCase', 'TransactionTestCase', 'APITestCase', 'RuleTestCase',
-           'PermissionTestCase')
+__all__ = (
+    'TestCase', 'TransactionTestCase', 'APITestCase', 'AuthProviderTestCase',
+    'RuleTestCase', 'PermissionTestCase', 'PluginTestCase'
+)
 
 import base64
 import os.path
@@ -26,13 +28,16 @@ from exam import before, Exam
 from nydus.db import create_cluster
 from rest_framework.test import APITestCase as BaseAPITestCase
 
+from sentry import auth
+from sentry.auth.providers.dummy import DummyProvider
 from sentry.constants import MODULE_ROOT
 from sentry.models import GroupMeta, OrganizationMemberType, ProjectOption
+from sentry.plugins import plugins
 from sentry.rules import EventState
 from sentry.utils import json
 
 from .fixtures import Fixtures
-from .helpers import get_auth_header
+from .helpers import AuthProvider, Feature, get_auth_header, TaskRunner
 
 
 def create_redis_conn():
@@ -56,7 +61,7 @@ class BaseTestCase(Fixtures, Exam):
     def assertRequiresAuthentication(self, path, method='GET'):
         resp = getattr(self.client, method.lower())(path)
         assert resp.status_code == 302
-        assert resp['Location'] == 'http://testserver' + reverse('sentry-login')
+        assert resp['Location'].startswith('http://testserver' + reverse('sentry-login'))
 
     @before
     def setup_session(self):
@@ -66,6 +71,23 @@ class BaseTestCase(Fixtures, Exam):
         session.save()
 
         self.session = session
+
+    def tasks(self):
+        return TaskRunner()
+
+    def feature(self, name, active=True):
+        """
+        >>> with self.feature('feature:name')
+        >>>     # ...
+        """
+        return Feature(name, active)
+
+    def auth_provider(self, name, cls):
+        """
+        >>> with self.auth_provider('name', Provider)
+        >>>     # ...
+        """
+        return AuthProvider(name, cls)
 
     def save_session(self):
         self.session.save()
@@ -128,7 +150,7 @@ class BaseTestCase(Fixtures, Exam):
             secret = self.projectkey.secret_key
 
         message = self._makePostMessage(data)
-        with self.settings(CELERY_ALWAYS_EAGER=True):
+        with self.tasks():
             resp = self.client.post(
                 reverse('sentry-api-store'), message,
                 content_type='application/octet-stream',
@@ -151,7 +173,7 @@ class BaseTestCase(Fixtures, Exam):
             'sentry_key': key,
             'sentry_data': message,
         }
-        with self.settings(CELERY_ALWAYS_EAGER=True):
+        with self.tasks():
             resp = self.client.get(
                 '%s?%s' % (reverse('sentry-api-store', args=(self.project.pk,)), urllib.urlencode(qs)),
                 **headers
@@ -174,6 +196,16 @@ class APITestCase(BaseTestCase, BaseAPITestCase):
     pass
 
 
+class AuthProviderTestCase(TestCase):
+    provider = DummyProvider
+    provider_name = 'dummy'
+
+    def setUp(self):
+        super(AuthProviderTestCase, self).setUp()
+        auth.register(self.provider_name, self.provider)
+        self.addCleanup(auth.unregister, self.provider_name, self.provider)
+
+
 class RuleTestCase(TestCase):
     rule_cls = None
 
@@ -191,6 +223,7 @@ class RuleTestCase(TestCase):
         kwargs.setdefault('is_regression', True)
         kwargs.setdefault('is_sample', True)
         kwargs.setdefault('rule_is_active', False)
+        kwargs.setdefault('rule_last_active', None)
         return EventState(**kwargs)
 
     def assertPasses(self, rule, event=None, **kwargs):
@@ -400,3 +433,12 @@ class PermissionTestCase(TestCase):
     def assert_non_member_cannot_access(self, path):
         user = self.create_user()
         self.assert_cannot_access(user, path)
+
+
+class PluginTestCase(TestCase):
+    plugin = None
+
+    def setUp(self):
+        super(PluginTestCase, self).setUp()
+        plugins.register(self.plugin)
+        self.addCleanup(plugins.unregister, self.plugin)

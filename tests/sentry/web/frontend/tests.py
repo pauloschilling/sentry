@@ -6,7 +6,7 @@ from django.core.urlresolvers import reverse
 from exam import fixture
 
 from sentry.constants import MEMBER_USER
-from sentry.models import OrganizationMember, User
+from sentry.models import User
 from sentry.testutils import TestCase
 
 
@@ -61,10 +61,10 @@ class MailStatusTest(TestCase):
         self.assertTemplateUsed(resp, 'sentry/admin/status/mail.html')
 
 
-class StatsTest(TestCase):
+class OverviewTest(TestCase):
     @fixture
     def path(self):
-        return reverse('sentry-admin-stats')
+        return reverse('sentry-admin-overview')
 
     def test_requires_auth(self):
         resp = self.client.get(self.path)
@@ -124,12 +124,12 @@ class PermissionBase(TestCase):
         user.set_password('member')
         user.save()
 
-        om = OrganizationMember.objects.create(
+        om = self.create_member(
             organization=self.team.organization,
             user=user,
             type=MEMBER_USER,
+            teams=[self.team],
         )
-        om.teams.add(self.team)
         return user
 
     @fixture

@@ -69,9 +69,9 @@ class ProjectKeyTest(TestCase):
 
     def test_key_is_created_for_project(self):
         user = self.create_user('admin@example.com')
-        team = self.create_team(name='Test', owner=user)
+        team = self.create_team(name='Test')
         project = self.create_project(name='Test', team=team)
-        assert project.key_set.filter(user__isnull=True).exists() is True
+        assert project.key_set.exists() is True
 
 
 class LostPasswordTest(TestCase):
@@ -82,7 +82,7 @@ class LostPasswordTest(TestCase):
         )
 
     def test_send_recover_mail(self):
-        with self.settings(SENTRY_URL_PREFIX='http://testserver', CELERY_ALWAYS_EAGER=True):
+        with self.settings(SENTRY_URL_PREFIX='http://testserver'), self.tasks():
             self.password_hash.send_recover_mail()
 
         assert len(mail.outbox) == 1

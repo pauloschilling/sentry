@@ -20,6 +20,7 @@ from django.views.decorators.csrf import csrf_protect
 from django.utils import timezone
 from sudo.decorators import sudo_required
 
+from sentry import features
 from sentry.models import (
     LostPasswordHash, Organization, Project, Team, UserOption
 )
@@ -28,45 +29,10 @@ from sentry.web.decorators import login_required
 from sentry.web.forms.accounts import (
     AccountSettingsForm, NotificationSettingsForm, AppearanceSettingsForm,
     RegistrationForm, RecoverPasswordForm, ChangePasswordRecoverForm,
-    ProjectEmailOptionsForm, AuthenticationForm)
+    ProjectEmailOptionsForm)
 from sentry.web.helpers import render_to_response
-from sentry.utils.auth import get_auth_providers
+from sentry.utils.auth import get_auth_providers, get_login_redirect
 from sentry.utils.safe import safe_execute
-
-
-@csrf_protect
-@never_cache
-def login(request):
-    from django.conf import settings
-
-    if request.user.is_authenticated():
-        return login_redirect(request)
-
-    form = AuthenticationForm(request, request.POST or None,
-                              captcha=bool(request.session.get('needs_captcha')))
-    if form.is_valid():
-        login_user(request, form.get_user())
-
-        request.session.pop('needs_captcha', None)
-
-        return login_redirect(request)
-
-    elif request.POST and not request.session.get('needs_captcha'):
-        request.session['needs_captcha'] = 1
-        form = AuthenticationForm(request, request.POST or None, captcha=True)
-        form.errors.pop('captcha', None)
-
-    request.session.set_test_cookie()
-
-    context = csrf(request)
-    context.update({
-        'form': form,
-        'next': request.session.get('_next'),
-        'CAN_REGISTER': settings.SENTRY_ALLOW_REGISTRATION or request.session.get('can_register'),
-        'AUTH_PROVIDERS': get_auth_providers(),
-        'SOCIAL_AUTH_CREATE_USERS': settings.SOCIAL_AUTH_CREATE_USERS,
-    })
-    return render_to_response('sentry/login.html', context, request)
 
 
 @csrf_protect
@@ -75,7 +41,7 @@ def login(request):
 def register(request):
     from django.conf import settings
 
-    if not (settings.SENTRY_ALLOW_REGISTRATION or request.session.get('can_register')):
+    if not (features.has('auth:register') or request.session.get('can_register')):
         return HttpResponseRedirect(reverse('sentry'))
 
     form = RegistrationForm(request.POST or None,
@@ -102,29 +68,13 @@ def register(request):
 
     return render_to_response('sentry/register.html', {
         'form': form,
-        'AUTH_PROVIDERS': get_auth_providers(),
-        'SOCIAL_AUTH_CREATE_USERS': settings.SOCIAL_AUTH_CREATE_USERS,
     }, request)
 
 
 @login_required
 def login_redirect(request):
-    default = reverse('sentry')
-    login_url = request.session.pop('_next', None) or default
-    if '//' in login_url:
-        login_url = default
-    elif login_url.startswith(reverse('sentry-login')):
-        login_url = default
+    login_url = get_login_redirect(request)
     return HttpResponseRedirect(login_url)
-
-
-@never_cache
-def logout(request):
-    from django.contrib.auth import logout
-
-    logout(request)
-
-    return HttpResponseRedirect(reverse('sentry'))
 
 
 def recover(request):
@@ -137,6 +87,7 @@ def recover(request):
         if not password_hash.is_valid():
             password_hash.date_added = timezone.now()
             password_hash.set_hash()
+            password_hash.save()
 
         password_hash.send_recover_mail()
 
@@ -237,7 +188,7 @@ def appearance_settings(request):
     form = AppearanceSettingsForm(request.user, request.POST or None, initial={
         'language': options.get('language') or request.LANGUAGE_CODE,
         'stacktrace_order': int(options.get('stacktrace_order', -1) or -1),
-        'timezone': options.get('timezone') or settings.TIME_ZONE,
+        'timezone': options.get('timezone') or settings.SENTRY_DEFAULT_TIME_ZONE,
     })
     if form.is_valid():
         form.save()

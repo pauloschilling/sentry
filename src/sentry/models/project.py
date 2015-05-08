@@ -8,6 +8,7 @@ sentry.models.project
 from __future__ import absolute_import, print_function
 
 import logging
+import warnings
 
 from django.conf import settings
 from django.core.urlresolvers import reverse
@@ -18,7 +19,8 @@ from django.utils.translation import ugettext_lazy as _
 
 from sentry.constants import PLATFORM_TITLES, PLATFORM_LIST
 from sentry.db.models import (
-    BaseManager, BoundedPositiveIntegerField, Model, sane_repr
+    BaseManager, BoundedPositiveIntegerField, FlexibleForeignKey, Model,
+    sane_repr
 )
 from sentry.db.models.utils import slugify_instance
 from sentry.utils.http import absolute_uri
@@ -86,8 +88,8 @@ class Project(Model):
 
     slug = models.SlugField(null=True)
     name = models.CharField(max_length=200)
-    organization = models.ForeignKey('sentry.Organization')
-    team = models.ForeignKey('sentry.Team')
+    organization = FlexibleForeignKey('sentry.Organization')
+    team = FlexibleForeignKey('sentry.Team')
     public = models.BooleanField(default=False)
     date_added = models.DateTimeField(default=timezone.now)
     status = BoundedPositiveIntegerField(default=0, choices=(
@@ -193,19 +195,40 @@ class Project(Model):
 
         return ProjectOption.objects.unset_value(self, *args, **kwargs)
 
-    def has_access(self, user, access=None):
+    @property
+    def member_set(self):
         from sentry.models import OrganizationMember
 
-        queryset = OrganizationMember.objects.filter(
+        return OrganizationMember.objects.filter(
             Q(teams=self.team) | Q(has_global_access=True),
             user__is_active=True,
-            user=user,
             organization=self.organization,
-        )
+        ).distinct()
+
+    def has_access(self, user, access=None):
+        from sentry.models import AuthIdentity, OrganizationMember
+
+        warnings.warn('Project.has_access is deprecated.', DeprecationWarning)
+
+        queryset = self.member_set.filter(user=user)
+
         if access is not None:
             queryset = queryset.filter(type__lte=access)
 
-        return queryset.exists()
+        try:
+            member = queryset.get()
+        except OrganizationMember.DoesNotExist:
+            return False
+
+        try:
+            auth_identity = AuthIdentity.objects.get(
+                auth_provider__organization=self.organization_id,
+                user=member.user_id,
+            )
+        except AuthIdentity.DoesNotExist:
+            return True
+
+        return auth_identity.is_valid(member)
 
     def get_audit_log_data(self):
         return {

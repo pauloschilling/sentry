@@ -7,6 +7,8 @@ sentry.models.team
 """
 from __future__ import absolute_import, print_function
 
+import warnings
+
 from django.conf import settings
 from django.core.urlresolvers import reverse
 from django.db import models
@@ -15,7 +17,8 @@ from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
 from sentry.db.models import (
-    BaseManager, BoundedPositiveIntegerField, Model, sane_repr
+    BaseManager, BoundedPositiveIntegerField, FlexibleForeignKey, Model,
+    sane_repr
 )
 from sentry.db.models.utils import slugify_instance
 from sentry.utils.http import absolute_uri
@@ -31,7 +34,8 @@ class TeamManager(BaseManager):
         OrganizationMemberType value.
         """
         from sentry.models import (
-            AccessGroup, OrganizationMember, OrganizationMemberType, Project
+            AccessGroup, OrganizationMember, OrganizationMemberTeam,
+            OrganizationMemberType, Project
         )
 
         if not user.is_authenticated():
@@ -42,15 +46,25 @@ class TeamManager(BaseManager):
             status=TeamStatus.VISIBLE
         )
 
-        if user.is_superuser:
-            team_list = list(base_team_qs)
-            for team in team_list:
-                team.access_type = OrganizationMemberType.OWNER
+        if user.is_superuser or (settings.SENTRY_PUBLIC and access is None):
+            inactive = list(OrganizationMemberTeam.objects.filter(
+                organizationmember__user=user,
+                organizationmember__organization=organization,
+                is_active=False,
+            ).values_list('team', flat=True))
 
-        elif settings.SENTRY_PUBLIC and access is None:
-            team_list = list(base_team_qs)
+            team_list = base_team_qs
+            if inactive:
+                team_list = team_list.exclude(id__in=inactive)
+
+            team_list = list(team_list)
+
+            if user.is_superuser:
+                access = OrganizationMemberType.OWNER
+            else:
+                access = OrganizationMemberType.MEMBER
             for team in team_list:
-                team.access_type = OrganizationMemberType.MEMBER
+                team.access_type = access
 
         else:
             om_qs = OrganizationMember.objects.filter(
@@ -65,13 +79,7 @@ class TeamManager(BaseManager):
             except OrganizationMember.DoesNotExist:
                 team_qs = self.none()
             else:
-                if om.has_global_access:
-                    team_qs = base_team_qs
-                else:
-                    team_qs = om.teams.filter(
-                        status=TeamStatus.VISIBLE
-                    )
-
+                team_qs = om.get_teams()
                 for team in team_qs:
                     team.access_type = om.type
 
@@ -121,10 +129,9 @@ class Team(Model):
     """
     A team represents a group of individuals which maintain ownership of projects.
     """
-    organization = models.ForeignKey('sentry.Organization')
+    organization = FlexibleForeignKey('sentry.Organization')
     slug = models.SlugField()
     name = models.CharField(max_length=64)
-    owner = models.ForeignKey(settings.AUTH_USER_MODEL)
     status = BoundedPositiveIntegerField(choices=(
         (TeamStatus.VISIBLE, _('Active')),
         (TeamStatus.PENDING_DELETION, _('Pending Deletion')),
@@ -175,11 +182,30 @@ class Team(Model):
         )
 
     def has_access(self, user, access=None):
-        queryset = self.member_set.filter(user=user)
+        from sentry.models import AuthIdentity, OrganizationMember
+
+        warnings.warn('Team.has_access is deprecated.', DeprecationWarning)
+
+        queryset = self.member_set.filter(
+            user=user,
+        )
         if access is not None:
             queryset = queryset.filter(type__lte=access)
 
-        return queryset.exists()
+        try:
+            member = queryset.get()
+        except OrganizationMember.DoesNotExist:
+            return False
+
+        try:
+            auth_identity = AuthIdentity.objects.get(
+                auth_provider__organization=self.organization_id,
+                user=member.user_id,
+            )
+        except AuthIdentity.DoesNotExist:
+            return True
+
+        return auth_identity.is_valid(member)
 
     def get_audit_log_data(self):
         return {
