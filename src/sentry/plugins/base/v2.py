@@ -22,7 +22,7 @@ class PluginMount(type):
         new_cls = type.__new__(cls, name, bases, attrs)
         if IPlugin2 in bases:
             return new_cls
-        if not new_cls.title:
+        if new_cls.title is None:
             new_cls.title = new_cls.__name__
         if not new_cls.slug:
             new_cls.slug = new_cls.title.replace(' ', '-').lower()
@@ -141,7 +141,7 @@ class IPlugin2(local):
         Returns a string representing the configuration keyspace prefix for this plugin.
         """
         if not self.conf_key:
-            return self.get_conf_title().lower().replace(' ', '_')
+            self.conf_key = self.get_conf_title().lower().replace(' ', '_')
         return self.conf_key
 
     def get_conf_title(self):
@@ -305,6 +305,21 @@ class IPlugin2(local):
 
         >>> def get_feature_hooks(self, **kwargs):
         >>>     return [NoRegistration()]
+        """
+        return []
+
+    def get_release_hook(self, **kwargs):
+        """
+        Return an implementation of ``ReleaseHook``.
+
+        >>> from sentry.plugins import ReleaseHook
+        >>>
+        >>> class MyReleaseHook(ReleaseHook):
+        >>>     def handle(self, request):
+        >>>         self.finish_release(version=request.POST['version'])
+
+        >>> def get_release_hook(self, **kwargs):
+        >>>     return MyReleaseHook
         """
         return []
 

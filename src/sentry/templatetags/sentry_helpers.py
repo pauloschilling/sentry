@@ -430,16 +430,6 @@ def render_values(value, threshold=5, collapse_to=3):
     return context
 
 
-@tag(register, [Constant('from'), Variable('project'),
-                Constant('as'), Name('asvar')])
-def recent_alerts(context, project, asvar):
-    from sentry.models import Alert
-
-    context[asvar] = list(Alert.get_recent_for_project(project.id))
-
-    return ''
-
-
 @register.filter
 def urlquote(value, safe=''):
     return quote(value.encode('utf8'), safe)
@@ -470,25 +460,6 @@ def localized_datetime(context, dt, format='DATETIME_FORMAT'):
 @register.filter
 def list_organizations(user):
     return Organization.objects.get_for_user(user)
-
-
-@register.filter
-def needs_access_group_migration(user, organization):
-    from sentry.models import AccessGroup, OrganizationMember, OrganizationMemberType
-
-    has_org_access_queryset = OrganizationMember.objects.filter(
-        user=user,
-        organization=organization,
-        has_global_access=True,
-        type__lte=OrganizationMemberType.ADMIN,
-    )
-
-    if not (user.is_superuser or has_org_access_queryset.exists()):
-        return False
-
-    return AccessGroup.objects.filter(
-        team__organization=organization
-    ).exists()
 
 
 @register.filter

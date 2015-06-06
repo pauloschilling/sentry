@@ -3,13 +3,14 @@ from __future__ import absolute_import
 from rest_framework import serializers
 from rest_framework.response import Response
 
-from sentry.api.serializers import serialize
 from sentry.api.bases.organization import (
     OrganizationEndpoint, OrganizationPermission
 )
 from sentry.api.exceptions import ResourceDoesNotExist
+from sentry.api.serializers import serialize
+from sentry.api.serializers.models.team import TeamWithProjectsSerializer
 from sentry.models import (
-    AuditLogEntry, AuditLogEntryEvent, OrganizationAccessRequest,
+    AuditLogEntryEvent, OrganizationAccessRequest,
     OrganizationMember, OrganizationMemberTeam, Team
 )
 
@@ -40,10 +41,26 @@ class OrganizationMemberTeamDetailsEndpoint(OrganizationEndpoint):
         if request.user.is_superuser:
             return True
 
+        if not request.user.is_authenticated():
+            return False
+
         if request.user.id == member.user_id:
             return True
 
         return False
+
+    def _get_member(self, request, organization, member_id):
+        if member_id == 'me':
+            queryset = OrganizationMember.objects.filter(
+                organization=organization,
+                user__id=request.user.id,
+            )
+        else:
+            queryset = OrganizationMember.objects.filter(
+                organization=organization,
+                id=member_id,
+            )
+        return queryset.select_related('user').get()
 
     def post(self, request, organization, member_id, team_slug):
         """
@@ -58,10 +75,7 @@ class OrganizationMemberTeamDetailsEndpoint(OrganizationEndpoint):
         be generated and the returned status code will be 202.
         """
         try:
-            om = OrganizationMember.objects.filter(
-                organization=organization,
-                id=member_id,
-            ).select_related('user').get()
+            om = self._get_member(request, organization, member_id)
         except OrganizationMember.DoesNotExist:
             raise ResourceDoesNotExist
 
@@ -115,17 +129,17 @@ class OrganizationMemberTeamDetailsEndpoint(OrganizationEndpoint):
         omt.is_active = True
         omt.save()
 
-        AuditLogEntry.objects.create(
+        self.create_audit_entry(
+            request=request,
             organization=organization,
-            actor=request.user,
-            ip_address=request.META['REMOTE_ADDR'],
             target_object=omt.id,
-            target_user=request.user,
+            target_user=om.user,
             event=AuditLogEntryEvent.MEMBER_JOIN_TEAM,
             data=omt.get_audit_log_data(),
         )
 
-        return Response(serialize(team), status=201)
+        return Response(serialize(
+            team, request.user, TeamWithProjectsSerializer), status=201)
 
     def delete(self, request, organization, member_id, team_slug):
         """
@@ -134,10 +148,7 @@ class OrganizationMemberTeamDetailsEndpoint(OrganizationEndpoint):
         Leave a team.
         """
         try:
-            om = OrganizationMember.objects.filter(
-                organization=organization,
-                id=member_id,
-            ).select_related('user').get()
+            om = self._get_member(request, organization, member_id)
         except OrganizationMember.DoesNotExist:
             raise ResourceDoesNotExist
 
@@ -160,7 +171,8 @@ class OrganizationMemberTeamDetailsEndpoint(OrganizationEndpoint):
                 )
             except OrganizationMemberTeam.DoesNotExist:
                 # if the relationship doesnt exist, they're already a member
-                return Response(status=204)
+                return Response(serialize(
+                    team, request.user, TeamWithProjectsSerializer), status=200)
         else:
             try:
                 omt = OrganizationMemberTeam.objects.get(
@@ -179,14 +191,14 @@ class OrganizationMemberTeamDetailsEndpoint(OrganizationEndpoint):
             omt.is_active = False
             omt.save()
 
-            AuditLogEntry.objects.create(
+            self.create_audit_entry(
+                request=request,
                 organization=organization,
-                actor=request.user,
-                ip_address=request.META['REMOTE_ADDR'],
                 target_object=omt.id,
-                target_user=request.user,
+                target_user=om.user,
                 event=AuditLogEntryEvent.MEMBER_LEAVE_TEAM,
                 data=omt.get_audit_log_data(),
             )
 
-        return Response(status=204)
+        return Response(serialize(
+            team, request.user, TeamWithProjectsSerializer), status=200)

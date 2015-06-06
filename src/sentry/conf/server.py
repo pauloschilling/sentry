@@ -18,6 +18,7 @@ import os
 import os.path
 import socket
 import sys
+import tempfile
 import urlparse
 
 gettext_noop = lambda s: s
@@ -42,7 +43,7 @@ sys.path.insert(0, os.path.normpath(os.path.join(PROJECT_ROOT, os.pardir)))
 
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
     }
 }
 
@@ -359,7 +360,6 @@ CELERY_DEFAULT_ROUTING_KEY = "default"
 CELERY_CREATE_MISSING_QUEUES = True
 CELERY_IMPORTS = (
     'sentry.tasks.beacon',
-    'sentry.tasks.check_alerts',
     'sentry.tasks.check_auth',
     'sentry.tasks.cleanup',
     'sentry.tasks.deletion',
@@ -398,7 +398,7 @@ def create_partitioned_queues(name):
 create_partitioned_queues('counters')
 create_partitioned_queues('triggers')
 
-
+CELERYBEAT_SCHEDULE_FILENAME = os.path.join(tempfile.gettempdir(), 'sentry-celerybeat')
 CELERYBEAT_SCHEDULE = {
     'check-auth': {
         'task': 'sentry.tasks.check_auth',
@@ -406,14 +406,6 @@ CELERYBEAT_SCHEDULE = {
         'options': {
             'expires': 60,
             'queue': 'auth',
-        }
-    },
-    'check-alerts': {
-        'task': 'sentry.tasks.check_alerts',
-        'schedule': timedelta(minutes=1),
-        'options': {
-            'expires': 60,
-            'queue': 'alerts',
         }
     },
     'send-beacon': {
@@ -536,6 +528,7 @@ SENTRY_FEATURES = {
     'organizations:create': True,
     'organizations:sso': False,
     'projects:quotas': True,
+    'projects:release-tracking': True,
     'teams:create': True,
 }
 

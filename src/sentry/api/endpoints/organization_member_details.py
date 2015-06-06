@@ -8,11 +8,15 @@ from sentry.api.bases.organization import (
 )
 from sentry.api.exceptions import ResourceDoesNotExist
 from sentry.models import (
-    AuditLogEntry, AuditLogEntryEvent, AuthProvider, OrganizationMember,
+    AuditLogEntryEvent, AuthProvider, OrganizationMember,
     OrganizationMemberType
 )
 
+ERR_NO_AUTH = 'You cannot remove this member with an unauthenticated API request.'
+
 ERR_INSUFFICIENT_ROLE = 'You cannot remove a member who has more access than you.'
+
+ERR_INSUFFICIENT_SCOPE = 'You are missing the member:delete scope.'
 
 ERR_ONLY_OWNER = 'You cannot remove the only remaining owner of the organization.'
 
@@ -25,18 +29,31 @@ class OrganizationMemberSerializer(serializers.Serializer):
 
 class RelaxedOrganizationPermission(OrganizationPermission):
     scope_map = {
-        'GET': ['org:read', 'org:write', 'org:delete'],
-        'POST': ['org:write', 'org:delete'],
-        'PUT': ['org:write', 'org:delete'],
+        'GET': ['member:read', 'member:write', 'member:delete'],
+        'POST': ['member:write', 'member:delete'],
+        'PUT': ['member:write', 'member:delete'],
 
         # DELETE checks for role comparison as you can either remove a member
         # with a lower access role, or yourself, without having the req. scope
-        'DELETE': ['org:read', 'org:write', 'org:delete'],
+        'DELETE': ['member:read', 'member:write', 'member:delete'],
     }
 
 
 class OrganizationMemberDetailsEndpoint(OrganizationEndpoint):
     permission_classes = [RelaxedOrganizationPermission]
+
+    def _get_member(self, request, organization, member_id):
+        if member_id == 'me':
+            queryset = OrganizationMember.objects.filter(
+                organization=organization,
+                user__id=request.user.id,
+            )
+        else:
+            queryset = OrganizationMember.objects.filter(
+                organization=organization,
+                id=member_id,
+            )
+        return queryset.select_related('user').get()
 
     def _is_only_owner(self, member):
         if member.type != OrganizationMemberType.OWNER:
@@ -45,6 +62,7 @@ class OrganizationMemberDetailsEndpoint(OrganizationEndpoint):
         queryset = OrganizationMember.objects.filter(
             organization=member.organization_id,
             type=OrganizationMemberType.OWNER,
+            has_global_access=True,
             user__isnull=False,
         ).exclude(id=member.id)
         if queryset.exists():
@@ -54,10 +72,7 @@ class OrganizationMemberDetailsEndpoint(OrganizationEndpoint):
 
     def put(self, request, organization, member_id):
         try:
-            om = OrganizationMember.objects.filter(
-                organization=organization,
-                id=member_id,
-            ).select_related('user').get()
+            om = self._get_member(request, organization, member_id)
         except OrganizationMember.DoesNotExist:
             raise ResourceDoesNotExist
 
@@ -85,17 +100,22 @@ class OrganizationMemberDetailsEndpoint(OrganizationEndpoint):
     def delete(self, request, organization, member_id):
         if request.user.is_superuser:
             authorizing_access = OrganizationMemberType.OWNER
+        elif request.user.is_authenticated():
+            try:
+                authorizing_access = OrganizationMember.objects.get(
+                    organization=organization,
+                    user=request.user,
+                    has_global_access=True,
+                ).type
+            except OrganizationMember.DoesNotExist:
+                return Response({'detail': ERR_INSUFFICIENT_ROLE}, status=400)
+        elif request.access.has_scope('member:delete'):
+            authorizing_access = OrganizationMemberType.OWNER
         else:
-            authorizing_access = OrganizationMember.objects.get(
-                organization=organization,
-                user=request.user,
-            ).type
+            return Response({'detail': ERR_INSUFFICIENT_SCOPE}, status=400)
 
         try:
-            om = OrganizationMember.objects.filter(
-                organization=organization,
-                id=member_id,
-            ).select_related('user').get()
+            om = self._get_member(request, organization, member_id)
         except OrganizationMember.DoesNotExist:
             raise ResourceDoesNotExist
 
@@ -117,12 +137,12 @@ class OrganizationMemberDetailsEndpoint(OrganizationEndpoint):
             ).exclude(id=om.id)[0].user
             organization.save()
 
+        # TODO(dcramer): we should probably clean up AuthIdentity here
         om.delete()
 
-        AuditLogEntry.objects.create(
+        self.create_audit_entry(
+            request=request,
             organization=organization,
-            actor=request.user,
-            ip_address=request.META['REMOTE_ADDR'],
             target_object=om.id,
             target_user=om.user,
             event=AuditLogEntryEvent.MEMBER_REMOVE,

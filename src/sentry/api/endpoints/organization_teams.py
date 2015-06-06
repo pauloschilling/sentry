@@ -6,7 +6,8 @@ from rest_framework.response import Response
 from sentry.api.base import DocSection
 from sentry.api.bases.organization import OrganizationEndpoint
 from sentry.api.serializers import serialize
-from sentry.models import AuditLogEntry, AuditLogEntryEvent, Team
+from sentry.api.serializers.models.team import TeamWithProjectsSerializer
+from sentry.models import AuditLogEntryEvent, Team, TeamStatus
 from sentry.permissions import can_create_teams
 
 
@@ -27,16 +28,18 @@ class OrganizationTeamsEndpoint(OrganizationEndpoint):
             {method} {path}
 
         """
+        # TODO(dcramer): this should be system-wide default for organization
+        # based endpoints
         if request.auth and hasattr(request.auth, 'project'):
-            teams = [request.auth.project.team]
-            if teams[0].organization != organization:
-                return Response(status=403)
-        else:
-            teams = Team.objects.get_for_user(
-                organization=organization,
-                user=request.user,
-            )
-        return Response(serialize(teams, request.user))
+            return Response(status=403)
+
+        team_list = list(Team.objects.filter(
+            organization=organization,
+            status=TeamStatus.VISIBLE,
+        ).order_by('name', 'slug'))
+
+        return Response(serialize(
+            team_list, request.user, TeamWithProjectsSerializer))
 
     def post(self, request, organization):
         """
@@ -64,10 +67,9 @@ class OrganizationTeamsEndpoint(OrganizationEndpoint):
                 organization=organization,
             )
 
-            AuditLogEntry.objects.create(
+            self.create_audit_entry(
+                request=request,
                 organization=organization,
-                actor=request.user,
-                ip_address=request.META['REMOTE_ADDR'],
                 target_object=team.id,
                 event=AuditLogEntryEvent.TEAM_ADD,
                 data=team.get_audit_log_data(),

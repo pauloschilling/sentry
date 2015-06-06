@@ -89,8 +89,8 @@ install_requires = [
     'mock>=0.8.0',
     'nydus>=0.11.0,<0.12.0',
     'markdown>=2.4.1,<2.5.0',
+    'petname>=1.7,<1.8',
     'progressbar>=2.2,<2.4',
-    'Pygments>=1.6.0,<1.7.0',
     'pytest',
     'pytest-django',
     'python-dateutil>=2.0.0,<3.0.0',
@@ -150,7 +150,7 @@ class BuildStatic(Command):
 
 setup(
     name='sentry',
-    version='7.5.0.dev0',
+    version='7.6.0.dev0',
     author='David Cramer',
     author_email='dcramer@gmail.com',
     url='https://www.getsentry.com',

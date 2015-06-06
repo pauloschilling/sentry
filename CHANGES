@@ -1,7 +1,43 @@
+Version 7.6.0
+-------------
+
+This releases entirely removes Access Groups. If you're upgrading form an installation that had yet to migrate away from this system you should first upgrade to a previous version, run the migration wizard, and then continue the upgrade.
+
+- The project-wide Alert system has been removed (to be re-implemented in the future).
+- Access groups have been permanently removed.
+- Added 'access_token' to data blacklist.
+- The legacy (unused) search tables have been removed.
+
+Version 7.5.4
+-------------
+
+- Yet another case where valid team membership was being excluded.
+
+Version 7.5.3
+-------------
+
+- Fix another case where valid team membership was being excluded
+
+Version 7.5.2
+-------------
+
+- Correctly support SENTRY_PROJECT.
+
+Version 7.5.1
+-------------
+
+- Fix case where certain pages were not correctly including valid team membership
+- Fix default user creation (regain automated signal)
+- Fix sampling of internal metrics
+
 Version 7.5.0
 -------------
 
 This release removes the ability to login or create accounts using a social auth backend.
+
+If your install was based purely on social accounts you'll need to use the standard reset password flows to recover accounts.
+
+Redis must be at least version 2.6.12.
 
 - Interface.compute_hashes() now receives the platform of the event.
 - Server-side data scrubbers were incorrectly filtering invalid interface aliases.
@@ -20,6 +56,11 @@ This release removes the ability to login or create accounts using a social auth
 - PendingTeamMember has been removed.
 - Added OrganizationMember.counter.
 - Added 'sentry.db.postgres' optimized Postgres backend.
+- Added ReleaseTrackingPlugin and various release-focused endpoints.
+- Dedicated configuration pages for Release Tracking and Issue Tracking integrations now exist.
+- Several additions to the Release schema.
+- Notification integrations are now present within project's notification settings.
+- Fixed an issue with tag key deletion not following explicit constraints.
 
 Version 7.4.3
 -------------
@@ -601,7 +642,7 @@ Version 4.9.0
 
 Social authentication is now supported!
 
-By configuring several options (documented on the quickstart guide), you can allow users to signup and login
+By configuring several options (documented in the getting started guide), you can allow users to signup and login
 with accounts from several social services. Additionally users can associate their existing accounts (via a
 new identities panel in their account settings) with any number of these services.
 

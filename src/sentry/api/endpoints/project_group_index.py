@@ -10,6 +10,7 @@ from sentry.app import search
 from sentry.api.base import DocSection
 from sentry.api.bases.project import ProjectEndpoint, ProjectEventPermission
 from sentry.api.serializers import serialize
+from sentry.api.serializers.models.group import StreamGroupSerializer
 from sentry.constants import (
     DEFAULT_SORT_OPTION, STATUS_CHOICES
 )
@@ -63,7 +64,7 @@ class ProjectGroupIndexEndpoint(ProjectEndpoint):
             try:
                 query_kwargs['status'] = STATUS_CHOICES[request.GET['status']]
             except KeyError:
-                return Response('{"error": "invalid status"}', status=400)
+                return Response('{"detail": "invalid status"}', status=400)
 
         if request.user.is_authenticated() and request.GET.get('bookmarks'):
             query_kwargs['bookmarked_by'] = request.user
@@ -96,7 +97,7 @@ class ProjectGroupIndexEndpoint(ProjectEndpoint):
             try:
                 query_kwargs['limit'] = int(limit)
             except ValueError:
-                return Response('{"error": "invalid limit"}', status=400)
+                return Response('{"detail": "invalid limit"}', status=400)
 
         today = timezone.now()
         # date format is Y-m-d
@@ -126,7 +127,7 @@ class ProjectGroupIndexEndpoint(ProjectEndpoint):
 
         GroupMeta.objects.populate_cache(context)
 
-        response = Response(serialize(context, request.user))
+        response = Response(serialize(context, request.user, StreamGroupSerializer))
         response['Link'] = ', '.join([
             self.build_cursor_link(request, 'previous', cursor_result.prev),
             self.build_cursor_link(request, 'next', cursor_result.next),
@@ -152,6 +153,13 @@ class ProjectGroupIndexEndpoint(ProjectEndpoint):
         - An optional 'status' parameter may be used to restrict mutations to
           only events with the given status.
 
+        For example, to resolve all aggregates (project-wide):
+
+            {method} {path}
+            {{
+                "status": "resolved"
+            }}
+
         Attributes:
 
         - status: resolved, unresolved, muted
@@ -175,13 +183,13 @@ class ProjectGroupIndexEndpoint(ProjectEndpoint):
 
         serializer = GroupSerializer(data=request.DATA, partial=True)
         if not serializer.is_valid():
-            return Response(status=400)
+            return Response(serializer.errors, status=400)
 
         result = serializer.object
 
         # validate that we've passed a selector for non-status bulk operations
-        if not group_ids and result.get('isBookmarked') is not None:
-            return Response(status=400)
+        if not group_ids and result.keys() != ['status']:
+            return Response('{"detail": "You must specify a list of IDs for this operation"}', status=400)
 
         if group_ids:
             filters = [Q(id__in=group_ids)]
@@ -192,7 +200,7 @@ class ProjectGroupIndexEndpoint(ProjectEndpoint):
             try:
                 status_filter = STATUS_CHOICES[request.GET['status']]
             except KeyError:
-                return Response(status=400)
+                return Response('{"detail": "Invalid status"}', status=400)
             filters.append(Q(status=status_filter))
 
         if result.get('status') == 'resolved':
@@ -305,7 +313,7 @@ class ProjectGroupIndexEndpoint(ProjectEndpoint):
             group_ids = [g.id for g in group_list]
         else:
             # missing any kind of filter
-            return Response(status=400)
+            return Response('{"detail": "You must specify a list of IDs for this operation"}', status=400)
 
         if not group_ids:
             return Response(status=204)

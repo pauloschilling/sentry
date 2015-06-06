@@ -1,8 +1,10 @@
-Quickstart
-==========
+Getting Started
+===============
 
 This guide will step you through setting up a Python-based virtualenv, installing the required packages,
 and configuring the basic web service.
+
+Disclaimer: While Sentry is seemingly easy to get up and running, it's a fairly complex system. This documentation does not intend to teach you how to maintain and configure many of the services, and the task should not be taken lightly.
 
 Dependencies
 ------------
@@ -12,8 +14,8 @@ Some basic prerequisites which you'll need in order to run Sentry:
 * A UNIX-based operating system. We test on Ubuntu.
 * Python 2.7
 * python-setuptools, python-pip, python-dev, libxslt1-dev, libxml2-dev, libz-dev, libffi-dev, libssl-dev
-* A real database (PostgreSQL is preferred, MySQL also works with caveats)
-* Redis
+* A real database (PostgreSQL)
+* Redis (2.6.12 or newer)
 * Nginx (with RealIP, i.e. nginx-full)
 * A dedicated domain to host Sentry on (i.e. sentry.yourcompany.com).
 
@@ -90,8 +92,9 @@ like the following:
 Using MySQL or Postgres
 ~~~~~~~~~~~~~~~~~~~~~~~
 
-We **highly** recommend using PostgreSQL for your database, or MySQL if you have no other choice. The default
-is sqlite and will handle very little load. If you're using MySQL, you should use InnoDB as your storage engine.
+We **highly** recommend using PostgreSQL for your database. The default database is sqlite and is only intended
+for Sentry's development environment. MySQL will work with various caveats (you should use InnoDB, for one), but
+is not officially supported by the Sentry team.
 
 These databases require additional packages, but Sentry provides a couple of meta packages to make things easier:
 
@@ -266,7 +269,7 @@ you can pass that via the --config option.
 You should now be able to test the web service by visiting `http://localhost:9000/`.
 
 .. note:: This doesn't run any workers in the background, so assuming queueing is enabled (default in 7.0.0+)
-          no asyncrhonous tasks will be running.
+          no asynchronous tasks will be running.
 
 Starting the Workers
 --------------------
@@ -353,8 +356,8 @@ folder and you're good to go.
   autostart=true
   autorestart=true
   redirect_stderr=true
-  stdout_logfile syslog
-  stderr_logfile syslog
+  stdout_logfile=syslog
+  stderr_logfile=syslog
 
   [program:sentry-worker]
   directory=/www/sentry/
@@ -362,8 +365,8 @@ folder and you're good to go.
   autostart=true
   autorestart=true
   redirect_stderr=true
-  stdout_logfile syslog
-  stderr_logfile syslog
+  stdout_logfile=syslog
+  stderr_logfile=syslog
 
 
 Removing Old Data

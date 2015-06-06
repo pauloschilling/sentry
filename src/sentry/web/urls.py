@@ -17,13 +17,12 @@ from django.conf import settings
 
 from sentry.web import api
 from sentry.web.frontend import (
-    alerts, accounts, generic, groups, events,
+    accounts, generic, groups, events,
     admin, users, explore, explore_code,
 )
 
 import sentry.web.frontend.projects.general
 import sentry.web.frontend.projects.keys
-import sentry.web.frontend.projects.notifications
 import sentry.web.frontend.projects.plugins
 import sentry.web.frontend.projects.quotas
 import sentry.web.frontend.projects.rules
@@ -32,7 +31,6 @@ import sentry.web.frontend.projects.tags
 __all__ = ('urlpatterns',)
 
 from sentry.web.frontend.accept_organization_invite import AcceptOrganizationInviteView
-from sentry.web.frontend.access_group_migration import AccessGroupMigrationView
 from sentry.web.frontend.auth_link_identity import AuthLinkIdentityView
 from sentry.web.frontend.auth_login import AuthLoginView
 from sentry.web.frontend.auth_logout import AuthLogoutView
@@ -57,7 +55,11 @@ from sentry.web.frontend.create_organization import CreateOrganizationView
 from sentry.web.frontend.create_organization_member import CreateOrganizationMemberView
 from sentry.web.frontend.create_project import CreateProjectView
 from sentry.web.frontend.create_team import CreateTeamView
+from sentry.web.frontend.project_issue_tracking import ProjectIssueTrackingView
+from sentry.web.frontend.project_notifications import ProjectNotificationsView
+from sentry.web.frontend.project_release_tracking import ProjectReleaseTrackingView
 from sentry.web.frontend.project_settings import ProjectSettingsView
+from sentry.web.frontend.release_webhook import ReleaseWebhookView
 from sentry.web.frontend.remove_organization import RemoveOrganizationView
 from sentry.web.frontend.remove_project import RemoveProjectView
 from sentry.web.frontend.remove_team import RemoveTeamView
@@ -108,6 +110,8 @@ urlpatterns += patterns('',
     url(r'^api/0/', include('sentry.api.urls')),
     url(r'^api/hooks/mailgun/inbound/', MailgunInboundWebhookView.as_view(),
         name='sentry-mailgun-inbound-hook'),
+    url(r'^api/hooks/release/(?P<plugin_id>[^/]+)/(?P<project_id>[^/]+)/(?P<signature>[^/]+)/', ReleaseWebhookView.as_view(),
+        name='sentry-release-hook'),
 
     # Auth
     url(r'^auth/link/(?P<organization_slug>[^/]+)/$', AuthLinkIdentityView.as_view(),
@@ -196,8 +200,6 @@ urlpatterns += patterns('',
         name='sentry-organization-home'),
     url(r'^organizations/new/$', CreateOrganizationView.as_view(),
         name='sentry-create-organization'),
-    url(r'^organizations/(?P<organization_slug>[\w_-]+)/access-groups/$', AccessGroupMigrationView.as_view(),
-        name='sentry-organization-access-group-migration'),
     url(r'^organizations/(?P<organization_slug>[\w_-]+)/api-keys/$', OrganizationApiKeysView.as_view(),
         name='sentry-organization-api-keys'),
     url(r'^organizations/(?P<organization_slug>[\w_-]+)/api-keys/(?P<key_id>[\w_-]+)$', OrganizationApiKeySettingsView.as_view(),
@@ -234,6 +236,12 @@ urlpatterns += patterns('',
         sentry.web.frontend.projects.general.get_started,
         name='sentry-get-started'),
 
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/issue-tracking/$',
+        ProjectIssueTrackingView.as_view(),
+        name='sentry-project-issue-tracking'),
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/release-tracking/$',
+        ProjectReleaseTrackingView.as_view(),
+        name='sentry-project-release-tracking'),
     url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/settings/$',
         ProjectSettingsView.as_view(),
         name='sentry-manage-project'),
@@ -284,8 +292,8 @@ urlpatterns += patterns('',
         sentry.web.frontend.projects.quotas.manage_project_quotas,
         name='sentry-manage-project-quotas'),
 
-    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/notifications/$',
-        sentry.web.frontend.projects.notifications.notification_settings,
+    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_slug>[\w_-]+)/notifications/$',
+        ProjectNotificationsView.as_view(),
         name='sentry-project-notifications'),
 
     url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/rules/$',
@@ -355,10 +363,6 @@ urlpatterns += patterns('',
     url(r'^(?P<organization_slug>[\w_-]+)/teams/(?P<team_slug>[\w_-]+)/wall/$', groups.wall_display,
         name='sentry-wall'),
 
-    # Team-wide alerts
-    url(r'^(?P<organization_slug>[\w_-]+)/teams/(?P<team_slug>[\w_-]+)/show/alerts/$', alerts.alert_list,
-        name='sentry-alerts'),
-
     # Explore - Users
     url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/explore/users/$',
         users.user_list, name='sentry-users'),
@@ -399,12 +403,6 @@ urlpatterns += patterns('',
         name='sentry-group-tags'),
     url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/group/(?P<group_id>\d+)/tags/(?P<tag_name>[^/]+)/$', groups.group_tag_details,
         name='sentry-group-tag-details'),
-    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/alerts/$', alerts.alert_list,
-        name='sentry-alerts'),
-    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/alerts/(?P<alert_id>\d+)/$', alerts.alert_details,
-        name='sentry-alert-details'),
-    url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/alerts/(?P<alert_id>\d+)/resolve/$', alerts.resolve_alert,
-        name='sentry-resolve-alert'),
     url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/stream/$', groups.group_list),
     url(r'^(?P<organization_slug>[\w_-]+)/(?P<project_id>[\w_-]+)/$', groups.group_list,
         name='sentry-stream'),

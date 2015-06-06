@@ -14,7 +14,7 @@ from django.utils.translation import ugettext_lazy as _
 
 from sentry.app import ratelimiter
 from sentry.plugins import Notification, Plugin
-from sentry.models import UserOption, AccessGroup
+from sentry.models import UserOption
 
 
 class NotificationConfigurationForm(forms.Form):
@@ -74,13 +74,7 @@ class NotificationPlugin(Plugin):
 
         disabled = set(u for u, v in alert_settings.iteritems() if v == 0)
 
-        # fetch access group members
-        member_set = set(AccessGroup.objects.filter(
-            projects=project,
-            members__is_active=True,
-        ).exclude(members__in=disabled).values_list('members', flat=True))
-
-        member_set |= set(project.member_set.exclude(
+        member_set = set(project.member_set.exclude(
             user__in=disabled,
         ).values_list('user', flat=True))
 
@@ -118,6 +112,9 @@ class NotificationPlugin(Plugin):
         from sentry.utils.samples import create_sample_event
         event = create_sample_event(project, default='python')
         return self.notify_users(event.group, event, fail_silently=False)
+
+    def get_notification_doc_html(self, **kwargs):
+        return ""
 
 
 # Backwards-compatibility

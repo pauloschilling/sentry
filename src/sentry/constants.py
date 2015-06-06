@@ -201,6 +201,7 @@ SENTRY_RULES = (
     'sentry.rules.conditions.tagged_event.TaggedEventCondition',
     'sentry.rules.conditions.event_frequency.EventFrequencyCondition',
     'sentry.rules.conditions.event_attribute.EventAttributeCondition',
+    'sentry.rules.conditions.level.LevelCondition',
 )
 
 # methods as defined by http://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html + PATCH
@@ -232,4 +233,11 @@ DEFAULT_SCRUBBED_FIELDS = (
     'authorization',
     'api_key',
     'apikey',
+    'access_token',
 )
+
+OK_PLUGIN_ENABLED = _("The {name} integration has been enabled.")
+
+OK_PLUGIN_DISABLED = _("The {name} integration has been disabled.")
+
+OK_PLUGIN_SAVED = _('Configuration for the {name} integration has been saved.')
