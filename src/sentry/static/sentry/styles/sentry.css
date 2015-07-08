@@ -6634,12 +6634,12 @@ h3 {
 }
 .navbar #team-banner .dropdown-menu {
   max-height: 400px;
-  min-width: 500px;
+  min-width: 700px;
   overflow: auto;
   top: 56px;
   position: absolute;
   min-height: 50px;
-  padding: 10px 10px 0;
+  padding: 0 10px;
   margin: 0;
   background: #313944;
   -webkit-box-shadow: none;
