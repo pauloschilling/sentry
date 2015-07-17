@@ -9,8 +9,7 @@ from __future__ import absolute_import
 
 from django import forms
 from django.conf import settings
-from django.utils.html import escape
-from django.utils.safestring import mark_safe
+from django.utils.html import format_html
 from social_auth.models import UserSocialAuth
 
 from sentry.models import GroupMeta, Activity
@@ -179,6 +178,7 @@ class IssueTrackingPlugin(Plugin):
                 'title': form.cleaned_data['title'],
                 'provider': self.get_title(),
                 'location': self.get_issue_url(group, issue_id),
+                'label': self.get_issue_label(group=group, issue_id=issue_id),
             }
             Activity.objects.create(
                 project=group.project,
@@ -214,10 +214,10 @@ class IssueTrackingPlugin(Plugin):
         if not issue_id:
             return tag_list
 
-        tag_list.append(mark_safe('<a href="%s">%s</a>' % (
+        tag_list.append(format_html('<a href="{}">{}</a>',
             self.get_issue_url(group=group, issue_id=issue_id),
-            escape(self.get_issue_label(group=group, issue_id=issue_id)),
-        )))
+            self.get_issue_label(group=group, issue_id=issue_id),
+        ))
 
         return tag_list
 

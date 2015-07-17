@@ -26,7 +26,8 @@ from sentry.constants import (
 )
 from sentry.interfaces.base import get_interface
 from sentry.models import (
-    Event, EventMapping, Group, GroupHash, GroupStatus, Project
+    Activity, Event, EventMapping, Group, GroupHash, GroupStatus, Project,
+    Release, UserReport
 )
 from sentry.plugins import plugins
 from sentry.signals import regression_signal
@@ -62,7 +63,7 @@ def md5_from_hash(hash_bits):
 
 
 def get_hashes_for_event(event):
-    interfaces = event.interfaces
+    interfaces = event.get_interfaces()
     for interface in interfaces.itervalues():
         result = interface.compute_hashes(event.platform)
         if not result:
@@ -296,27 +297,7 @@ class EventManager(object):
             **kwargs
         )
 
-        # Calculate the checksum from the first highest scoring interface
-        if checksum:
-            hashes = [checksum]
-        else:
-            hashes = get_hashes_for_event(event)
-
-        # TODO(dcramer): remove checksum usage
-        event.checksum = hashes[0]
-
-        group_kwargs = kwargs.copy()
-        group_kwargs.update({
-            'culprit': culprit,
-            'logger': logger_name,
-            'level': level,
-            'last_seen': date,
-            'first_seen': date,
-            'time_spent_total': time_spent or 0,
-            'time_spent_count': time_spent and 1 or 0,
-        })
-
-        tags = data['tags']
+        tags = data.get('tags') or []
         tags.append(('level', LOG_LEVELS[level]))
         if logger_name:
             tags.append(('logger', logger_name))
@@ -333,11 +314,45 @@ class EventManager(object):
                                       _with_transaction=False)
             if added_tags:
                 tags.extend(added_tags)
+        # XXX(dcramer): we're relying on mutation of the data object to ensure
+        # this propagates into Event
+        data['tags'] = tags
+
+        # Calculate the checksum from the first highest scoring interface
+        if checksum:
+            hashes = [checksum]
+        else:
+            hashes = get_hashes_for_event(event)
+
+        group_kwargs = kwargs.copy()
+        group_kwargs.update({
+            'culprit': culprit,
+            'logger': logger_name,
+            'level': level,
+            'last_seen': date,
+            'first_seen': date,
+            'time_spent_total': time_spent or 0,
+            'time_spent_count': time_spent and 1 or 0,
+        })
+
+        if release:
+            group_kwargs['first_release'] = Release.get_or_create(
+                project=project,
+                version=release,
+                date_added=date,
+            )
+
+            Activity.objects.create(
+                type=Activity.RELEASE,
+                project=project,
+                ident=release,
+                data={'version': release},
+                datetime=date,
+            )
 
         group, is_new, is_regression, is_sample = safe_execute(
             self._save_aggregate,
             event=event,
-            tags=tags,
             hashes=hashes,
             **group_kwargs
         )
@@ -346,8 +361,17 @@ class EventManager(object):
 
         event.group = group
 
-        safe_execute(Group.objects.add_tags, group, tags,
-                     _with_transaction=False)
+        try:
+            with transaction.atomic():
+                EventMapping.objects.create(
+                    project=project, group=group, event_id=event_id)
+        except IntegrityError:
+            self.logger.info('Duplicate EventMapping found for event_id=%s', event_id)
+            return event
+
+        UserReport.objects.filter(
+            project=project, event_id=event_id,
+        ).update(group=group)
 
         # save the event unless its been sampled
         if not is_sample:
@@ -358,13 +382,8 @@ class EventManager(object):
                 self.logger.info('Duplicate Event found for event_id=%s', event_id)
                 return event
 
-        try:
-            with transaction.atomic():
-                EventMapping.objects.create(
-                    project=project, group=group, event_id=event_id)
-        except IntegrityError:
-            self.logger.info('Duplicate EventMapping found for event_id=%s', event_id)
-            return event
+        safe_execute(Group.objects.add_tags, group, tags,
+                     _with_transaction=False)
 
         if not raw:
             post_process_group.delay(
@@ -420,7 +439,7 @@ class EventManager(object):
             group=group,
         )
 
-    def _save_aggregate(self, event, tags, hashes, **kwargs):
+    def _save_aggregate(self, event, hashes, **kwargs):
         time_spent = event.time_spent
         project = event.project
 
@@ -437,12 +456,10 @@ class EventManager(object):
         # should be better tested/reviewed
         if existing_group_id is None:
             kwargs['score'] = ScoreClause.calculate(1, kwargs['last_seen'])
-            group, group_is_new = Group.objects.get_or_create(
+            group, group_is_new = Group.objects.create(
                 project=project,
-                # TODO(dcramer): remove checksum from Group/Event
-                checksum=hashes[0],
-                defaults=kwargs,
-            )
+                **kwargs
+            ), True
         else:
             group = Group.objects.get(id=existing_group_id)
 

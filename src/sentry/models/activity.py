@@ -19,6 +19,8 @@ from sentry.db.models import (
 
 
 class Activity(Model):
+    __core__ = False
+
     SET_RESOLVED = 1
     SET_UNRESOLVED = 2
     SET_MUTED = 3
@@ -30,6 +32,7 @@ class Activity(Model):
     FIRST_SEEN = 9
     RELEASE = 10
     ASSIGNED = 11
+    UNASSIGNED = 12
 
     TYPE = (
         # (TYPE, verb-slug)
@@ -44,6 +47,7 @@ class Activity(Model):
         (FIRST_SEEN, 'first_seen'),
         (RELEASE, 'release'),
         (ASSIGNED, 'assigned'),
+        (UNASSIGNED, 'unassigned'),
     )
 
     project = FlexibleForeignKey('sentry.Project')

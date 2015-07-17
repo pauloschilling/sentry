@@ -12,10 +12,11 @@ from logan.runner import run_app, configure_app
 
 import base64
 import os
+import sys
 import pkg_resources
 import warnings
 
-USE_GEVENT = os.environ.get('USE_GEVENT')
+USE_GEVENT = os.environ.get('USE_GEVENT') == '1'
 
 KEY_LENGTH = 40
 
@@ -172,6 +173,7 @@ SENTRY_URL_PREFIX = 'http://sentry.example.com'  # No trailing slash!
 # If you're using a reverse proxy, you should enable the X-Forwarded-Proto
 # header and uncomment the following settings
 # SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+# SESSION_COOKIE_SECURE = True
 
 SENTRY_WEB_HOST = '0.0.0.0'
 SENTRY_WEB_PORT = 9000
@@ -304,7 +306,23 @@ def initialize_app(config):
     if settings.SENTRY_SINGLE_ORGANIZATION:
         settings.SENTRY_FEATURES['organizations:create'] = False
 
+    settings.SUDO_COOKIE_SECURE = getattr(settings, 'SESSION_COOKIE_SECURE', False)
+    settings.SUDO_COOKIE_DOMAIN = getattr(settings, 'SESSION_COOKIE_DOMAIN', None)
+
     initialize_receivers()
+
+    validate_backends()
+
+
+def validate_backends():
+    from sentry import app
+
+    app.buffer.validate()
+    app.nodestore.validate()
+    app.quotas.validate()
+    app.search.validate()
+    app.ratelimiter.validate()
+    app.tsdb.validate()
 
 
 def fix_south(settings):
@@ -317,6 +335,14 @@ def fix_south(settings):
     }
 
 
+def show_big_error(message):
+    sys.stderr.write('\n')
+    sys.stderr.write('\033[91m!! %s !!\033[0m\n' % ('!' * min(len(message), 80),))
+    sys.stderr.write('\033[91m!! %s !!\033[0m\n' % message)
+    sys.stderr.write('\033[91m!! %s !!\033[0m\n' % ('!' * min(len(message), 80),))
+    sys.stderr.write('\n')
+
+
 def apply_legacy_settings(config):
     settings = config['settings']
 
@@ -327,37 +353,21 @@ def apply_legacy_settings(config):
         settings.CELERY_ALWAYS_EAGER = (not settings.SENTRY_USE_QUEUE)
 
     if not settings.SENTRY_ADMIN_EMAIL:
-        print('')
-        print('\033[91m!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\033[0m')
-        print('\033[91m!! SENTRY_ADMIN_EMAIL is not configured !!\033[0m')
-        print('\033[91m!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\033[0m')
-        print('')
+        show_big_error('SENTRY_ADMIN_EMAIL is not configured')
     elif not isinstance(settings.SENTRY_ADMIN_EMAIL, basestring):
-        print('')
-        print('\033[91m!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\033[0m')
-        print('\033[91m!! SENTRY_ADMIN_EMAIL must be a string !!\033[0m')
-        print('\033[91m!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\033[0m')
-        print('')
+        show_big_error('SENTRY_ADMIN_EMAIL must be a string')
 
     if settings.SENTRY_URL_PREFIX in ('', 'http://sentry.example.com') and not settings.DEBUG:
         # Maybe also point to a piece of documentation for more information?
         # This directly coincides with users getting the awkward
         # `ALLOWED_HOSTS` exception.
-        print('')
-        print('\033[91m!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\033[0m')
-        print('\033[91m!! SENTRY_URL_PREFIX is not configured !!\033[0m')
-        print('\033[91m!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\033[0m')
-        print('')
+        show_big_error('SENTRY_URL_PREFIX is not configured')
         # Set `ALLOWED_HOSTS` to the catch-all so it works
         settings.ALLOWED_HOSTS = ['*']
 
     if settings.TIME_ZONE != 'UTC':
         # non-UTC timezones are not supported
-        print('')
-        print('\033[91m!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\033[0m')
-        print('\033[91m!! TIME_ZONE should be set to UTC !!\033[0m')
-        print('\033[91m!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\033[0m')
-        print('')
+        show_big_error('TIME_ZONE should be set to UTC')
 
     # Set ALLOWED_HOSTS if it's not already available
     if not settings.ALLOWED_HOSTS:
@@ -423,7 +433,7 @@ def configure(config_path=None):
 
 def main():
     if USE_GEVENT:
-        print("Configuring Sentry with gevent bindings")
+        sys.stderr.write("Configuring Sentry with gevent bindings\n")
         initialize_gevent()
 
     run_app(

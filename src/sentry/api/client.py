@@ -3,7 +3,7 @@ from __future__ import absolute_import
 __all__ = ('ApiClient',)
 
 from django.core.urlresolvers import resolve
-from rest_framework.test import APIRequestFactory
+from rest_framework.test import APIRequestFactory, force_authenticate
 
 from sentry.utils import json
 
@@ -22,7 +22,8 @@ class ApiClient(object):
 
     ApiError = ApiError
 
-    def request(self, method, path, user, auth=None, params=None, data=None):
+    def request(self, method, path, user, auth=None, params=None, data=None,
+                is_sudo=False):
         full_path = self.prefix + path
 
         resolver_match = resolve(full_path)
@@ -36,6 +37,8 @@ class ApiClient(object):
         mock_request = getattr(rf, method.lower())(full_path, data)
         mock_request.auth = auth
         mock_request.user = user
+        mock_request.is_sudo = lambda: is_sudo
+        force_authenticate(mock_request, user, auth)
 
         if params:
             mock_request.GET._mutable = True

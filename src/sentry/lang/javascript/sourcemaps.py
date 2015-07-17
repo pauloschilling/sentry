@@ -116,23 +116,29 @@ def sourcemap_to_index(sourcemap):
     state_list = []
     key_list = []
     src_list = set()
-    content = None
+    content = {}
     sourceRoot = smap.get('sourceRoot')
 
     # turn /foo/bar into /foo/bar/ so urljoin doesnt strip the last path
     if sourceRoot and not sourceRoot.endswith('/'):
         sourceRoot = sourceRoot + '/'
 
-    if 'sourcesContent' in smap:
-        content = {}
+    if smap.get('sourcesContent'):
         for idx, source in enumerate(smap['sources']):
+            # Ensure we handle null files that may be specified outside of
+            # sourcesContent
+            try:
+                value = smap['sourcesContent'][idx]
+            except IndexError:
+                continue
+
+            if value is None:
+                continue
+
             # Apply the root to the source before shoving into the index
             # so we can look it up correctly later
             source = urljoin(sourceRoot, source)
-            if smap['sourcesContent'][idx]:
-                content[source] = smap['sourcesContent'][idx].splitlines()
-            else:
-                content[source] = []
+            content[source] = value.splitlines()
 
     for state in parse_sourcemap(smap):
         state_list.append(state)

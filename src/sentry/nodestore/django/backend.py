@@ -37,13 +37,15 @@ class DjangoNodeStorage(NodeStorage):
         create_or_update(
             Node,
             id=id,
-            defaults={
+            values={
                 'data': data,
                 'timestamp': timezone.now(),
             },
         )
 
     def cleanup(self, cutoff_timestamp):
+        # TODO(dcramer): this should share the efficient bulk deletion
+        # mechanisms
         query = """
         DELETE FROM %s WHERE timestamp <= %%s
         """ % (Node._meta.db_table,)

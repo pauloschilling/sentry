@@ -37,6 +37,14 @@ class Buffer(object):
             'extra': extra,
         })
 
+    def validate(self):
+        """
+        Validates the settings for this backend (i.e. such as proper connection
+        info).
+
+        Raise ``InvalidConfiguration`` if there is a configuration error.
+        """
+
     def process_pending(self):
         return []
 
@@ -46,7 +54,7 @@ class Buffer(object):
             update_kwargs.update(extra)
 
         _, created = model.objects.create_or_update(
-            defaults=update_kwargs,
+            values=update_kwargs,
             **filters
         )
 

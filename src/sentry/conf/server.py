@@ -361,7 +361,6 @@ CELERY_CREATE_MISSING_QUEUES = True
 CELERY_IMPORTS = (
     'sentry.tasks.beacon',
     'sentry.tasks.check_auth',
-    'sentry.tasks.cleanup',
     'sentry.tasks.deletion',
     'sentry.tasks.email',
     'sentry.tasks.index',
@@ -682,6 +681,7 @@ SENTRY_TSDB_ROLLUPS = (
     # (time in seconds, samples to keep)
     (10, 30),  # 5 minute at 10 seconds
     (3600, 24 * 7),  # 7 days at 1 hour
+    (3600 * 24, 60),  # 60 days at 1 day
 )
 
 

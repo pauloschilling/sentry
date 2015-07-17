@@ -7,17 +7,22 @@ from django.utils import timezone
 
 from sentry.api.serializers import Serializer, register, serialize
 from sentry.app import tsdb
-from sentry.constants import TAG_LABELS
 from sentry.models import (
-    Group, GroupAssignee, GroupBookmark, GroupTagKey, GroupSeen, GroupStatus
+    Group, GroupAssignee, GroupBookmark, GroupMeta, GroupTagKey, GroupSeen,
+    GroupStatus, TagKey
 )
 from sentry.utils.db import attach_foreignkey
 from sentry.utils.http import absolute_uri
+from sentry.utils.safe import safe_execute
 
 
 @register(Group)
 class GroupSerializer(Serializer):
     def get_attrs(self, item_list, user):
+        from sentry.plugins import plugins
+
+        GroupMeta.objects.populate_cache(item_list)
+
         attach_foreignkey(item_list, Group.project, ['team'])
 
         if user.is_authenticated() and item_list:
@@ -47,27 +52,43 @@ class GroupSerializer(Serializer):
             ).select_related('user')
         )
 
+        tagkeys = dict(
+            (t.key, t)
+            for t in TagKey.objects.filter(
+                project=item_list[0].project,
+                key__in=tag_counts.keys(),
+            )
+        )
+
         result = {}
         for item in item_list:
             active_date = item.active_at or item.last_seen
 
             tags = {}
             for key in tag_counts.iterkeys():
-                label = TAG_LABELS.get(key, key.replace('_', ' ')).lower()
+                # TODO(dcramer): query for these
+                tagkey = tagkeys[key]
                 try:
                     value = tag_counts[key].get(item.id, 0)
                 except KeyError:
                     value = 0
                 tags[key] = {
-                    'label': label,
+                    'name': tagkey.get_label(),
                     'count': value,
                 }
+
+            annotations = []
+            for plugin in plugins.for_project(project=item.project, version=1):
+                safe_execute(plugin.tags, None, item, annotations)
+            for plugin in plugins.for_project(project=item.project, version=2):
+                annotations.extend(safe_execute(plugin.get_annotations, item) or ())
 
             result[item] = {
                 'assigned_to': serialize(assignees.get(item.id)),
                 'is_bookmarked': item.id in bookmarks,
                 'has_seen': seen_groups.get(item.id, active_date) > active_date,
                 'tags': tags,
+                'annotations': annotations,
             }
         return result
 
@@ -88,6 +109,7 @@ class GroupSerializer(Serializer):
 
         d = {
             'id': str(obj.id),
+            'shareId': obj.get_share_id(),
             'count': str(obj.times_seen),
             'title': obj.message_short,
             'culprit': obj.culprit,
@@ -107,6 +129,7 @@ class GroupSerializer(Serializer):
             'isBookmarked': attrs['is_bookmarked'],
             'hasSeen': attrs['has_seen'],
             'tags': attrs['tags'],
+            'annotations': attrs['annotations'],
         }
         return d
 
@@ -118,20 +141,18 @@ class StreamGroupSerializer(GroupSerializer):
         # we need to compute stats at 1d (1h resolution), and 14d
         group_ids = [g.id for g in item_list]
         now = timezone.now()
-        hourly_stats = tsdb.get_range(
+        hourly_stats = tsdb.rollup(tsdb.get_range(
             model=tsdb.models.group,
             keys=group_ids,
             end=now,
             start=now - timedelta(days=1),
-            rollup=3600,
-        )
-        daily_stats = tsdb.get_range(
+        ), 3600)
+        daily_stats = tsdb.rollup(tsdb.get_range(
             model=tsdb.models.group,
             keys=group_ids,
             end=now,
             start=now - timedelta(days=14),
-            rollup=3600 * 24,
-        )
+        ), 3600 * 24)
 
         for item in item_list:
             attrs[item].update({

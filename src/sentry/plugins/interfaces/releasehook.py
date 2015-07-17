@@ -12,27 +12,34 @@ __all__ = ['ReleaseHook']
 
 from django.utils import timezone
 
-from sentry.models import Release
+from sentry.models import Activity, Release
 
 
 class ReleaseHook(object):
     def __init__(self, project):
         self.project = project
 
-    def start_release(self, version, **defaults):
-        defaults.setdefault('date_started', timezone.now())
+    def start_release(self, version, **values):
+        values.setdefault('date_started', timezone.now())
         Release.objects.create_or_update(
             version=version,
             project=self.project,
-            defaults=defaults,
+            values=values,
         )
 
-    def finish_release(self, version, **defaults):
-        defaults.setdefault('date_released', timezone.now())
+    def finish_release(self, version, **values):
+        values.setdefault('date_released', timezone.now())
         Release.objects.create_or_update(
             version=version,
             project=self.project,
-            defaults=defaults,
+            values=values,
+        )
+        Activity.objects.create(
+            type=Activity.RELEASE,
+            project=self.project,
+            ident=version,
+            data={'version': version},
+            datetime=values['date_released'],
         )
 
     def handle(self, request):

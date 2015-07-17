@@ -13,8 +13,8 @@ from sentry.api.serializers import serialize
 from sentry.constants import STATUS_CHOICES
 from sentry.db.models.query import create_or_update
 from sentry.models import (
-    Activity, Group, GroupAssignee, GroupBookmark, GroupMeta, GroupSeen,
-    GroupStatus, GroupTagValue
+    Activity, Group, GroupAssignee, GroupBookmark, GroupSeen, GroupStatus,
+    GroupTagValue, Release
 )
 from sentry.plugins import plugins
 from sentry.utils.safe import safe_execute
@@ -85,6 +85,16 @@ class GroupDetailsEndpoint(GroupEndpoint):
 
         return action_list
 
+    def _get_release_info(self, request, group, version):
+        try:
+            release = Release.objects.get(
+                project=group.project,
+                version=version,
+            )
+        except Release.DoesNotExist:
+            return {'version': version}
+        return serialize(release, request.user)
+
     def get(self, request, group):
         """
         Retrieve an aggregate
@@ -94,8 +104,7 @@ class GroupDetailsEndpoint(GroupEndpoint):
             {method} {path}
 
         """
-        GroupMeta.objects.populate_cache([group])
-
+        # TODO(dcramer): handle unauthenticated/public response
         data = serialize(group, request.user)
 
         # TODO: these probably should be another endpoint
@@ -103,40 +112,57 @@ class GroupDetailsEndpoint(GroupEndpoint):
         seen_by = self._get_seen_by(request, group)
 
         # find first seen release
-        try:
-            first_release = GroupTagValue.objects.filter(
-                group=group,
-                key='sentry:release',
-            ).order_by('first_seen')[0]
-        except IndexError:
-            first_release = None
+        if group.first_release is None:
+            try:
+                first_release = GroupTagValue.objects.filter(
+                    group=group,
+                    key='sentry:release',
+                ).order_by('first_seen')[0]
+            except IndexError:
+                first_release = None
+            else:
+                first_release = first_release.value
         else:
-            first_release = {
-                'version': first_release.value,
-                # TODO(dcramer): this should look it up in Release
-                'dateCreated': first_release.first_seen,
-            }
+            first_release = group.first_release.version
+
+        if first_release is not None:
+            # find last seen release
+            try:
+                last_release = GroupTagValue.objects.filter(
+                    group=group,
+                    key='sentry:release',
+                ).order_by('-last_seen')[0]
+            except IndexError:
+                last_release = None
+            else:
+                last_release = last_release.value
+        else:
+            last_release = None
 
         action_list = self._get_actions(request, group)
 
         now = timezone.now()
-        hourly_stats = tsdb.get_range(
+        hourly_stats = tsdb.rollup(tsdb.get_range(
             model=tsdb.models.group,
             keys=[group.id],
             end=now,
             start=now - timedelta(days=1),
-            rollup=3600,
-        )[group.id]
-        daily_stats = tsdb.get_range(
+        ), 3600)[group.id]
+        daily_stats = tsdb.rollup(tsdb.get_range(
             model=tsdb.models.group,
             keys=[group.id],
             end=now,
             start=now - timedelta(days=30),
-            rollup=3600 * 24,
-        )[group.id]
+        ), 3600 * 24)[group.id]
+
+        if first_release:
+            first_release = self._get_release_info(request, group, first_release)
+        if last_release:
+            last_release = self._get_release_info(request, group, last_release)
 
         data.update({
             'firstRelease': first_release,
+            'lastRelease': last_release,
             'activity': serialize(activity, request.user),
             'seenBy': serialize(seen_by, request.user),
             'pluginActions': action_list,
@@ -209,7 +235,7 @@ class GroupDetailsEndpoint(GroupEndpoint):
                 group=group,
                 user=request.user,
                 project=group.project,
-                defaults={
+                values={
                     'last_seen': timezone.now(),
                 }
             )

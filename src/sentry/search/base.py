@@ -13,13 +13,21 @@ class SearchBackend(object):
     def __init__(self, **options):
         pass
 
+    def validate(self):
+        """
+        Validates the settings for this backend (i.e. such as proper connection
+        info).
+
+        Raise ``InvalidConfiguration`` if there is a configuration error.
+        """
+
     def index(self, event):
         raise NotImplementedError
 
     def query(self, project, query=None, status=None, tags=None,
-              bookmarked_by=None, assigned_to=None, sort_by='date',
-              date_filter='last_seen', date_from=None, date_to=None,
-              cursor=None, limit=100):
+              bookmarked_by=None, assigned_to=None, first_release=None,
+              sort_by='date', date_filter='last_seen', date_from=None,
+              date_to=None, cursor=None, limit=100):
         """
         The return value should be a CursorResult.
 

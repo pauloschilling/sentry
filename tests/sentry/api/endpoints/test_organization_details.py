@@ -76,7 +76,7 @@ class OrganizationDeleteTest(APITestCase):
         org.member_set.create_or_update(
             organization=org,
             user=user,
-            defaults={
+            values={
                 'type': OrganizationMemberType.ADMIN,
             }
         )
@@ -89,3 +89,19 @@ class OrganizationDeleteTest(APITestCase):
         response = self.client.delete(url)
 
         assert response.status_code == 403
+
+    def test_cannot_remove_default(self):
+        Organization.objects.all().delete()
+
+        org = self.create_organization(owner=self.user)
+
+        self.login_as(self.user)
+
+        url = reverse('sentry-api-0-organization-details', kwargs={
+            'organization_slug': org.slug,
+        })
+
+        with self.settings(SENTRY_SINGLE_ORGANIZATION=True):
+            response = self.client.delete(url)
+
+        assert response.status_code == 400, response.data

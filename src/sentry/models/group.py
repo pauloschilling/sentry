@@ -11,7 +11,9 @@ import logging
 import math
 import six
 import time
+import warnings
 
+from base64 import b16decode, b16encode
 from datetime import timedelta
 from django.core.urlresolvers import reverse
 from django.db import models
@@ -39,9 +41,6 @@ class GroupStatus(object):
 
 class GroupManager(BaseManager):
     use_for_related_fields = True
-
-    def get_by_natural_key(self, project, checksum):
-        return self.get(project=project, checksum=checksum)
 
     def from_kwargs(self, project, **kwargs):
         from sentry.event_manager import EventManager
@@ -89,6 +88,8 @@ class Group(Model):
     """
     Aggregated message which summarizes a set of Events.
     """
+    __core__ = False
+
     project = FlexibleForeignKey('sentry.Project', null=True)
     logger = models.CharField(
         max_length=64, blank=True, default=DEFAULT_LOGGER_NAME, db_index=True)
@@ -99,7 +100,6 @@ class Group(Model):
     culprit = models.CharField(
         max_length=MAX_CULPRIT_LENGTH, blank=True, null=True,
         db_column='view')
-    checksum = models.CharField(max_length=32, db_index=True)
     num_comments = BoundedPositiveIntegerField(default=0, null=True)
     platform = models.CharField(max_length=64, null=True)
     status = BoundedPositiveIntegerField(default=0, choices=(
@@ -110,6 +110,7 @@ class Group(Model):
     times_seen = BoundedPositiveIntegerField(default=1, db_index=True)
     last_seen = models.DateTimeField(default=timezone.now, db_index=True)
     first_seen = models.DateTimeField(default=timezone.now, db_index=True)
+    first_release = FlexibleForeignKey('sentry.Release', null=True)
     resolved_at = models.DateTimeField(null=True, db_index=True)
     # active_at should be the same as first_seen by default
     active_at = models.DateTimeField(null=True, db_index=True)
@@ -124,14 +125,16 @@ class Group(Model):
     class Meta:
         app_label = 'sentry'
         db_table = 'sentry_groupedmessage'
-        unique_together = (('project', 'checksum'),)
         verbose_name_plural = _('grouped messages')
         verbose_name = _('grouped message')
         permissions = (
             ("can_view", "Can view"),
         )
+        index_together = (
+            ('project', 'first_release'),
+        )
 
-    __repr__ = sane_repr('project_id', 'checksum')
+    __repr__ = sane_repr('project_id')
 
     def __unicode__(self):
         return "(%s) %s" % (self.times_seen, self.error())
@@ -158,9 +161,6 @@ class Group(Model):
             return
         return float(self.time_spent_total) / self.time_spent_count
 
-    def natural_key(self):
-        return (self.project, self.checksum)
-
     def is_over_resolve_age(self):
         resolve_age = self.project.get_option('sentry:resolve_age', None)
         if not resolve_age:
@@ -177,6 +177,17 @@ class Group(Model):
         if self.status == GroupStatus.UNRESOLVED and self.is_over_resolve_age():
             return GroupStatus.RESOLVED
         return self.status
+
+    def get_share_id(self):
+        return b16encode('{}.{}'.format(self.project_id, self.id)).lower()
+
+    @classmethod
+    def from_share_id(cls, share_id):
+        try:
+            project_id, group_id = b16decode(share_id.upper()).split('.')
+        except ValueError:
+            raise cls.DoesNotExist
+        return cls.objects.get(project=project_id, id=group_id)
 
     def get_score(self):
         return int(math.log(self.times_seen) * 600 + float(time.mktime(self.last_seen.timetuple())))
@@ -279,6 +290,11 @@ class Group(Model):
     @property
     def team(self):
         return self.project.team
+
+    @property
+    def checksum(self):
+        warnings.warn('Group.checksum is no longer used', DeprecationWarning)
+        return ''
 
     def get_email_subject(self):
         return '[%s %s] %s: %s' % (
