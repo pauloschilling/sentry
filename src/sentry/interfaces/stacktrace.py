@@ -83,7 +83,7 @@ def is_newest_frame_first(event):
 
 
 def is_url(filename):
-    return '://' in filename
+    return filename.startswith(('file:', 'http:', 'https:'))
 
 
 def remove_function_outliers(function):
@@ -108,21 +108,25 @@ def remove_filename_outliers(filename):
     return _filename_version_re.sub('<version>/', filename)
 
 
-def trim_frames(stacktrace, max_frames=settings.SENTRY_MAX_STACKTRACE_FRAMES):
-    # TODO: this doesnt account for cases where the client has already omitted
-    # frames
+def slim_frame_data(stacktrace,
+                    frame_allowance=settings.SENTRY_MAX_STACKTRACE_FRAMES):
+    """
+    Removes various excess metadata from middle frames which go beyond
+    ``frame_allowance``.
+    """
     frames = stacktrace['frames']
     frames_len = len(frames)
 
-    if frames_len <= max_frames:
+    if frames_len <= frame_allowance:
         return
 
-    half_max = max_frames / 2
-
-    stacktrace['frames_omitted'] = (half_max, frames_len - half_max)
+    half_max = frame_allowance / 2
 
     for n in xrange(half_max, frames_len - half_max):
-        del frames[half_max]
+        # remove heavy components
+        frames[n].pop('vars', None)
+        frames[n].pop('pre_context', None)
+        frames[n].pop('post_context', None)
 
 
 def validate_bool(value, required=True):
@@ -139,16 +143,21 @@ class Frame(Interface):
         abs_path = data.get('abs_path')
         filename = data.get('filename')
 
+        # absolute path takes priority over filename
+        # (in the end both will get set)
         if not abs_path:
             abs_path = filename
+            filename = None
 
-        if not filename:
-            filename = abs_path
-
-        if abs_path and is_url(abs_path):
-            urlparts = urlparse(abs_path)
-            if urlparts.path:
-                filename = urlparts.path
+        if not filename and abs_path:
+            if is_url(abs_path):
+                urlparts = urlparse(abs_path)
+                if urlparts.path:
+                    filename = urlparts.path
+                else:
+                    filename = abs_path
+            else:
+                filename = abs_path
 
         assert filename or data.get('function') or data.get('module')
 
@@ -450,7 +459,7 @@ class Stacktrace(Interface):
     def to_python(cls, data):
         assert data.get('frames')
 
-        trim_frames(data)
+        slim_frame_data(data)
 
         kwargs = {
             'frames': [
@@ -497,7 +506,16 @@ class Stacktrace(Interface):
         frames = self.frames
 
         # TODO(dcramer): this should apply only to JS
-        if len(frames) == 1 and frames[0].lineno == 1 and frames[0].function in ('?', None):
+        # In a common case (I believe from window.onerror) we can end up with
+        # a stacktrace which includes a single frame and a reference that isnt
+        # valuable. It would generally point to the loading page, so it's possible
+        # we could improve this check using that information.
+        stack_invalid = (
+            len(frames) == 1 and frames[0].lineno == 1
+            and frames[0].function in ('?', None) and frames[0].is_url()
+        )
+
+        if stack_invalid:
             return []
 
         if not system_frames:

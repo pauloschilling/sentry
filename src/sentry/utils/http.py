@@ -71,9 +71,7 @@ def get_origins(project=None):
         result = []
 
     if project:
-        # TODO: we should cache this
-        from sentry.plugins.helpers import get_option
-        optval = get_option('sentry:origins', project)
+        optval = project.get_option('sentry:origins', ['*'])
         if optval:
             result.extend(optval)
 

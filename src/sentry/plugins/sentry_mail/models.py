@@ -11,8 +11,8 @@ import sentry
 
 from django.conf import settings
 from django.core.urlresolvers import reverse
+from django.utils.encoding import force_text
 from django.utils.safestring import mark_safe
-from django.utils.translation import ugettext_lazy as _
 
 from sentry.plugins import register
 from sentry.plugins.bases.notify import NotificationPlugin
@@ -24,7 +24,7 @@ NOTSET = object()
 
 
 class MailPlugin(NotificationPlugin):
-    title = _('Mail')
+    title = 'Mail'
     conf_key = 'mail'
     slug = 'mail'
     version = sentry.VERSION
@@ -41,6 +41,8 @@ class MailPlugin(NotificationPlugin):
             return
 
         subject_prefix = self.get_option('subject_prefix', project) or self.subject_prefix
+        subject_prefix = force_text(subject_prefix)
+        subject = force_text(subject)
 
         msg = MessageBuilder(
             subject='%s%s' % (subject_prefix, subject),
@@ -164,6 +166,7 @@ class MailPlugin(NotificationPlugin):
             rules.append((rule.label, rule_link))
 
         context = {
+            'project_label': project.get_full_name(),
             'group': group,
             'event': event,
             'tags': event.get_tags(),

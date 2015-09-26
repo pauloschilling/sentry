@@ -7,9 +7,10 @@ import responses
 
 from requests.exceptions import RequestException
 
+from sentry.interfaces.stacktrace import Stacktrace
 from sentry.lang.javascript.processor import (
     BadSource, discover_sourcemap, fetch_sourcemap, fetch_url, generate_module,
-    trim_line, UrlResult
+    SourceProcessor, trim_line, UrlResult
 )
 from sentry.lang.javascript.sourcemaps import SourceMap, SourceMapIndex
 from sentry.testutils import TestCase
@@ -128,6 +129,8 @@ class GenerateModuleTest(TestCase):
         assert generate_module('http://example.com/vendor.92cd589eca8235e7b373bf5ae94ebf898e3b949c.js') == 'vendor'
         assert generate_module('/a/javascripts/application-bundle-149360d3414c26adac3febdf6832e25c.min.js') == 'a/javascripts/application-bundle'
         assert generate_module('https://example.com/libs/libs-20150417171659.min.js') == 'libs/libs'
+        assert generate_module('webpack:///92cd589eca8235e7b373bf5ae94ebf898e3b949c/vendor.js') == 'vendor'
+        assert generate_module('webpack:///example/92cd589eca8235e7b373bf5ae94ebf898e3b949c/vendor.js') == 'vendor'
 
 
 class FetchBase64SourcemapTest(TestCase):
@@ -151,3 +154,64 @@ class TrimLineTest(TestCase):
         assert trim_line(self.long_line, column=66) == '{snip} blic is more familiar with bad design than good design. It is, in effect, conditioned to prefer bad design, because that is what it lives wi {snip}'
         assert trim_line(self.long_line, column=190) == '{snip} gn. It is, in effect, conditioned to prefer bad design, because that is what it lives with. The new becomes threatening, the old reassuring.'
         assert trim_line(self.long_line, column=9999) == '{snip} gn. It is, in effect, conditioned to prefer bad design, because that is what it lives with. The new becomes threatening, the old reassuring.'
+
+
+class SourceProcessorTest(TestCase):
+    def test_get_stacktraces_returns_stacktrace_interface(self):
+        data = {
+            'message': 'hello',
+            'platform': 'javascript',
+            'sentry.interfaces.Stacktrace': {
+                'frames': [
+                    {
+                        'abs_path': 'http://example.com/foo.js',
+                        'filename': 'foo.js',
+                        'lineno': 4,
+                        'colno': 0,
+                    },
+                    {
+                        'abs_path': 'http://example.com/foo.js',
+                        'filename': 'foo.js',
+                        'lineno': 1,
+                        'colno': 0,
+                    },
+                ],
+            },
+        }
+
+        processor = SourceProcessor()
+        result = processor.get_stacktraces(data)
+        assert len(result) == 1
+        assert type(result[0][1]) is Stacktrace
+
+    def test_get_stacktraces_returns_exception_interface(self):
+        data = {
+            'message': 'hello',
+            'platform': 'javascript',
+            'sentry.interfaces.Exception': {
+                'values': [{
+                    'type': 'Error',
+                    'stacktrace': {
+                        'frames': [
+                            {
+                                'abs_path': 'http://example.com/foo.js',
+                                'filename': 'foo.js',
+                                'lineno': 4,
+                                'colno': 0,
+                            },
+                            {
+                                'abs_path': 'http://example.com/foo.js',
+                                'filename': 'foo.js',
+                                'lineno': 1,
+                                'colno': 0,
+                            },
+                        ],
+                    },
+                }],
+            }
+        }
+
+        processor = SourceProcessor()
+        result = processor.get_stacktraces(data)
+        assert len(result) == 1
+        assert type(result[0][1]) is Stacktrace

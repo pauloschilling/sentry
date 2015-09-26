@@ -2,6 +2,8 @@
 
 from __future__ import absolute_import
 
+import pytest
+
 from datetime import timedelta
 from django.core import mail
 from django.core.urlresolvers import reverse
@@ -9,7 +11,7 @@ from django.db import connection
 from django.utils import timezone
 from exam import fixture
 
-from sentry.db.models.fields.node import NodeData
+from sentry.db.models.fields.node import NodeData, NodeIntegrityFailure
 from sentry.models import ProjectKey, Event, LostPasswordHash
 from sentry.testutils import TestCase
 from sentry.utils.compat import pickle
@@ -123,3 +125,21 @@ class EventNodeStoreTest(TestCase):
 
         assert event.data == data
         assert event.data.id == node_id
+
+    def test_screams_bloody_murder_when_ref_fails(self):
+        group1 = self.create_group()
+        invalid_event = self.create_event(group=group1)
+        group2 = self.create_group()
+        event = self.create_event(group=group2)
+        event.data.bind_ref(invalid_event)
+        event.save()
+
+        assert event.data.get_ref(event) == event.group.id
+        assert event.data.get_ref(invalid_event) == invalid_event.group.id
+
+        with pytest.raises(NodeIntegrityFailure):
+            Event.objects.bind_nodes([event], 'data')
+
+    def test_basic_ref_binding(self):
+        event = self.create_event()
+        assert event.data.get_ref(event) == event.group.id

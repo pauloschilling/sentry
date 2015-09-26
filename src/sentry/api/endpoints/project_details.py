@@ -1,5 +1,7 @@
 from __future__ import absolute_import
 
+import logging
+
 from rest_framework import serializers, status
 from rest_framework.response import Response
 
@@ -40,7 +42,7 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
         """
         data = serialize(project, request.user)
         data['options'] = {
-            'sentry:origins': '\n'.join(project.get_option('sentry:origins', None) or []),
+            'sentry:origins': '\n'.join(project.get_option('sentry:origins', '*') or []),
             'sentry:resolve_age': int(project.get_option('sentry:resolve_age', 0)),
             'sentry:scrub_data': bool(project.get_option('sentry:scrub_data', True)),
             'sentry:sensitive_fields': project.get_option('sentry:sensitive_fields', []),
@@ -95,7 +97,7 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
 
             data = serialize(project, request.user)
             data['options'] = {
-                'sentry:origins': '\n'.join(project.get_option('sentry:origins', None) or []),
+                'sentry:origins': '\n'.join(project.get_option('sentry:origins', '*') or []),
                 'sentry:resolve_age': int(project.get_option('sentry:resolve_age', 0)),
             }
             return Response(data)
@@ -119,12 +121,16 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
             return Response('{"error": "Cannot remove projects internally used by Sentry."}',
                             status=status.HTTP_403_FORBIDDEN)
 
+        logging.getLogger('sentry.deletions').info(
+            'Project %s/%s (id=%s) removal requested by user (id=%s)',
+            project.organization.slug, project.slug, project.id, request.user.id)
+
         updated = Project.objects.filter(
             id=project.id,
             status=ProjectStatus.VISIBLE,
         ).update(status=ProjectStatus.PENDING_DELETION)
         if updated:
-            delete_project.delay(object_id=project.id)
+            delete_project.delay(object_id=project.id, countdown=3600)
 
             self.create_audit_entry(
                 request=request,

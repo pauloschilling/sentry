@@ -12,7 +12,6 @@ from sentry.models import (
     AuditLogEntry, AuditLogEntryEvent, OrganizationMemberType, Project, Team
 )
 from sentry.permissions import can_remove_project, can_set_public_projects
-from sentry.plugins import plugins
 from sentry.web.forms.fields import (
     CustomTypedChoiceField, RangeField, OriginsField
 )
@@ -25,8 +24,6 @@ BLANK_CHOICE = [("", "")]
 class EditProjectForm(forms.ModelForm):
     name = forms.CharField(label=_('Project Name'), max_length=200,
         widget=forms.TextInput(attrs={'placeholder': _('Production')}))
-    platform = forms.ChoiceField(choices=Project._meta.get_field('platform').get_choices(blank_choice=BLANK_CHOICE),
-        widget=forms.Select(attrs={'data-placeholder': _('Select a platform')}))
     public = forms.BooleanField(required=False,
         help_text=_('Imply public access to any event for this project.'))
     team = CustomTypedChoiceField(choices=(), coerce=int, required=False)
@@ -56,9 +53,14 @@ class EditProjectForm(forms.ModelForm):
         help_text=_('Prevent IP addresses from being stored for new events.'),
         required=False
     )
+    scrape_javascript = forms.BooleanField(
+        label=_('Enable JavaScript source fetching'),
+        help_text=_('Allow Sentry to scrape missing JavaScript source context when possible.'),
+        required=False,
+    )
 
     class Meta:
-        fields = ('name', 'platform', 'public', 'team', 'slug')
+        fields = ('name', 'public', 'team', 'slug')
         model = Project
 
     def __init__(self, request, organization, team_list, data, instance, *args, **kwargs):
@@ -148,22 +150,13 @@ class ProjectSettingsView(ProjectView):
         if request.user.is_superuser:
             return True
 
-        result = plugins.first('has_perm', request.user, 'edit_project', project)
-        if result is False:
-            return False
-
         return True
 
     def get_form(self, request, project):
         organization = project.organization
-        if request.user.is_superuser:
-            accessing_user = organization.owner
-        else:
-            accessing_user = request.user
-
         team_list = Team.objects.get_for_user(
             organization=organization,
-            user=accessing_user,
+            user=request.user,
             access=OrganizationMemberType.ADMIN,
         )
 
@@ -176,12 +169,13 @@ class ProjectSettingsView(ProjectView):
         return EditProjectForm(
             request, organization, team_list, request.POST or None,
             instance=project, initial={
-                'origins': '\n'.join(project.get_option('sentry:origins', None) or []),
+                'origins': '\n'.join(project.get_option('sentry:origins', '*') or []),
                 'token': security_token,
                 'resolve_age': int(project.get_option('sentry:resolve_age', 0)),
                 'scrub_data': bool(project.get_option('sentry:scrub_data', True)),
                 'sensitive_fields': '\n'.join(project.get_option('sentry:sensitive_fields', None) or []),
                 'scrub_ip_address': bool(project.get_option('sentry:scrub_ip_address', False)),
+                'scrape_javascript': bool(project.get_option('sentry:scrape_javascript', True)),
             },
         )
 
@@ -191,7 +185,7 @@ class ProjectSettingsView(ProjectView):
         if form.is_valid():
             project = form.save()
             for opt in ('origins', 'resolve_age', 'scrub_data', 'sensitive_fields',
-                        'scrub_ip_address', 'token'):
+                        'scrape_javascript', 'scrub_ip_address', 'token'):
                 value = form.cleaned_data.get(opt)
                 if value is None:
                     project.delete_option('sentry:%s' % (opt,))

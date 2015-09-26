@@ -25,7 +25,6 @@ from django.http import HttpRequest
 from django.test import TestCase, TransactionTestCase
 from django.utils.importlib import import_module
 from exam import before, Exam
-from nydus.db import create_cluster
 from rest_framework.test import APITestCase as BaseAPITestCase
 
 from sentry import auth
@@ -38,21 +37,6 @@ from sentry.utils import json
 
 from .fixtures import Fixtures
 from .helpers import AuthProvider, Feature, get_auth_header, TaskRunner
-
-
-def create_redis_conn():
-    options = {
-        'engine': 'nydus.db.backends.redis.Redis',
-    }
-    options.update(settings.SENTRY_REDIS_OPTIONS)
-
-    return create_cluster(options)
-
-_redis_conn = create_redis_conn()
-
-
-def flush_redis():
-    _redis_conn.flushdb()
 
 
 class BaseTestCase(Fixtures, Exam):
@@ -136,15 +120,13 @@ class BaseTestCase(Fixtures, Exam):
     def _post_teardown(self):
         super(BaseTestCase, self)._post_teardown()
 
-        flush_redis()
-
     def _makeMessage(self, data):
         return json.dumps(data)
 
     def _makePostMessage(self, data):
         return base64.b64encode(self._makeMessage(data))
 
-    def _postWithHeader(self, data, key=None, secret=None):
+    def _postWithHeader(self, data, key=None, secret=None, protocol=None):
         if key is None:
             key = self.projectkey.public_key
             secret = self.projectkey.secret_key
@@ -154,7 +136,12 @@ class BaseTestCase(Fixtures, Exam):
             resp = self.client.post(
                 reverse('sentry-api-store'), message,
                 content_type='application/octet-stream',
-                HTTP_X_SENTRY_AUTH=get_auth_header('_postWithHeader', key, secret),
+                HTTP_X_SENTRY_AUTH=get_auth_header(
+                    '_postWithHeader',
+                    key,
+                    secret,
+                    protocol,
+                ),
             )
         return resp
 

@@ -88,7 +88,9 @@ class Project(Model):
         (ProjectStatus.PENDING_DELETION, _('Pending Deletion')),
         (ProjectStatus.DELETION_IN_PROGRESS, _('Deletion in Progress')),
     ), db_index=True)
-    platform = models.CharField(max_length=32, choices=PLATFORM_CHOICES, null=True)
+    # projects that were created before this field was present
+    # will have their first_event field set to date_added
+    first_event = models.DateTimeField(null=True)
 
     objects = ProjectManager(cache_fields=[
         'pk',
@@ -230,5 +232,9 @@ class Project(Model):
             'name': self.name,
             'status': self.status,
             'public': self.public,
-            'platform': self.platform,
         }
+
+    def get_full_name(self):
+        if self.team.name not in self.name:
+            return '%s %s' % (self.team.name, self.name)
+        return self.name

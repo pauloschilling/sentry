@@ -13,19 +13,13 @@ BLANK_CHOICE = [("", "")]
 class AddProjectForm(forms.ModelForm):
     name = forms.CharField(label=_('Name'), max_length=200,
         widget=forms.TextInput(attrs={
-            'placeholder': _('e.g. Backend, Frontend, iOS, Android'),
+            'placeholder': _('i.e. my project name'),
         }),
-    )
-    platform = forms.ChoiceField(
-        choices=Project._meta.get_field('platform').get_choices(blank_choice=BLANK_CHOICE),
-        widget=forms.Select(attrs={
-            'data-placeholder': _('Select a platform'),
-        }),
-        help_text='Your platform choice helps us setup some defaults for this project.',
+        help_text='Using the repository name generally works well.',
     )
 
     class Meta:
-        fields = ('name', 'platform')
+        fields = ('name',)
         model = Project
 
     def save(self, actor, team, ip_address):
@@ -43,6 +37,6 @@ class AddProjectForm(forms.ModelForm):
             data=project.get_audit_log_data(),
         )
 
-        create_sample_event(project)
+        create_sample_event(project, platform='javascript')
 
         return project

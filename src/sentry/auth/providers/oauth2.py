@@ -4,6 +4,7 @@ import logging
 
 from time import time
 from urllib import urlencode
+from urlparse import parse_qsl
 from uuid import uuid4
 
 from sentry.auth import Provider, AuthView
@@ -96,7 +97,8 @@ class OAuth2Callback(AuthView):
         )
         req = safe_urlopen(self.access_token_url, data=data)
         body = safe_urlread(req)
-
+        if req.headers['Content-Type'].startswith('application/x-www-form-urlencoded'):
+            return dict(parse_qsl(body))
         return json.loads(body)
 
     def dispatch(self, request, helper):
@@ -157,8 +159,9 @@ class OAuth2Provider(Provider):
         data = {
             'access_token': payload['access_token'],
             'token_type': payload['token_type'],
-            'expires': time() + payload['expires_in'],
         }
+        if 'expires_in' in payload:
+            data['expires'] = time() + payload['expires_in']
         if 'refresh_token' in payload:
             data['refresh_token'] = payload['refresh_token']
         return data
@@ -211,5 +214,3 @@ class OAuth2Provider(Provider):
 
         auth_identity.data.update(self.get_oauth_data(payload))
         auth_identity.update(data=auth_identity.data)
-
-        return True

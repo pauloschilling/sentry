@@ -8,6 +8,7 @@ sentry.models.activity
 from __future__ import absolute_import
 
 from django.conf import settings
+from django.core.urlresolvers import reverse
 from django.db import models
 from django.db.models import F
 from django.utils import timezone
@@ -16,6 +17,7 @@ from sentry.db.models import (
     Model, BoundedPositiveIntegerField, FlexibleForeignKey, GzippedDictField,
     sane_repr
 )
+from sentry.utils.http import absolute_uri
 
 
 class Activity(Model):
@@ -110,12 +112,10 @@ class Activity(Model):
         return send_to
 
     def send_notification(self):
+        from sentry.models import Release
         from sentry.utils.email import MessageBuilder, group_id_to_email
 
-        if not self.group_id:
-            return
-
-        if self.type not in (Activity.NOTE, Activity.ASSIGNED):
+        if self.type not in (Activity.NOTE, Activity.ASSIGNED, Activity.RELEASE):
             return
 
         send_to = self.get_recipients()
@@ -123,25 +123,56 @@ class Activity(Model):
         if not send_to:
             return
 
-        author = self.user.first_name or self.user.username
+        project = self.project
+        org = self.project.organization
+
+        if self.user:
+            author = self.user.first_name or self.user.username
+        else:
+            author = None
 
         subject_prefix = self.project.get_option(
             'subject_prefix', settings.EMAIL_SUBJECT_PREFIX)
         if subject_prefix:
             subject_prefix = subject_prefix.rstrip() + ' '
 
-        subject = '%s%s' % (subject_prefix, self.group.get_email_subject())
+        if self.group:
+            subject = '%s%s' % (subject_prefix, self.group.get_email_subject())
+        elif self.type == Activity.RELEASE:
+            subject = '%sRelease %s' % (subject_prefix, self.data['version'])
+        else:
+            raise NotImplementedError
+
+        headers = {}
 
         context = {
             'data': self.data,
             'author': author,
-            'group': self.group,
-            'link': self.group.get_absolute_url(),
+            'project': self.project,
+            'project_link': absolute_uri(reverse('sentry-stream', kwargs={
+                'organization_slug': org.slug,
+                'project_id': project.slug,
+            })),
         }
 
-        headers = {
-            'X-Sentry-Reply-To': group_id_to_email(self.group.id),
-        }
+        if self.group:
+            headers.update({
+                'X-Sentry-Reply-To': group_id_to_email(self.group.id),
+            })
+
+            context.update({
+                'group': self.group,
+                'link': self.group.get_absolute_url(),
+            })
+
+        # TODO(dcramer): abstract each activity email into its own helper class
+        if self.type == Activity.RELEASE:
+            context.update({
+                'release': Release.objects.get(
+                    version=self.data['version'],
+                    project=project,
+                ),
+            })
 
         template_name = self.get_type_display()
 

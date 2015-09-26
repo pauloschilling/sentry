@@ -34,13 +34,20 @@ admin.site.register(Broadcast, BroadcastAdmin)
 
 
 class ProjectAdmin(admin.ModelAdmin):
-    list_display = ('name', 'slug', 'organization', 'platform', 'status', 'date_added')
-    list_filter = ('status', 'platform', 'public')
+    list_display = ('name', 'slug', 'organization', 'status', 'date_added')
+    list_filter = ('status', 'public')
     search_fields = ('name', 'organization__slug', 'organization__name', 'team__slug',
                      'team__name', 'slug')
     raw_id_fields = ('team', 'organization')
 
 admin.site.register(Project, ProjectAdmin)
+
+
+class OrganizationProjectInline(admin.TabularInline):
+    model = Project
+    extra = 1
+    fields = ('name', 'slug', 'status', 'date_added')
+    raw_id_fields = ('organization', 'team')
 
 
 class OrganizationTeamInline(admin.TabularInline):
@@ -58,12 +65,12 @@ class OrganizationMemberInline(admin.TabularInline):
 
 
 class OrganizationAdmin(admin.ModelAdmin):
-    list_display = ('name', 'slug', 'owner', 'status')
+    list_display = ('name', 'slug', 'status')
     list_filter = ('status',)
-    search_fields = ('name', 'owner__username', 'owner__email', 'slug')
-    raw_id_fields = ('owner',)
-    fields = ('name', 'slug', 'owner', 'status')
-    inlines = (OrganizationMemberInline, OrganizationTeamInline)
+    search_fields = ('name', 'slug')
+    fields = ('name', 'slug', 'status')
+    inlines = (OrganizationMemberInline, OrganizationTeamInline,
+               OrganizationProjectInline)
 
 admin.site.register(Organization, OrganizationAdmin)
 

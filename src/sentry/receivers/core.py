@@ -3,22 +3,19 @@ from __future__ import absolute_import, print_function
 import logging
 
 from django.conf import settings
-from django.contrib.auth.signals import user_logged_in
 from django.db import connections
-from django.db.utils import OperationalError
+from django.db.utils import OperationalError, ProgrammingError
 from django.db.models.signals import post_syncdb, post_save
 from functools import wraps
 from pkg_resources import parse_version as Version
 
 from sentry import options
 from sentry.models import (
-    Organization, OrganizationMemberType, Project, User, Team, ProjectKey,
-    UserOption, TagKey, TagValue, GroupTagValue, GroupTagKey, Activity,
-    Alert
+    Organization, OrganizationMember, OrganizationMemberType, Project, User,
+    Team, ProjectKey, TagKey, TagValue, GroupTagValue, GroupTagKey, Activity
 )
 from sentry.signals import buffer_incr_complete, regression_signal
 from sentry.utils import db
-from sentry.utils.safe import safe_execute
 
 PROJECT_SEQUENCE_FIX = """
 SELECT setval('sentry_project_id_seq', (
@@ -32,7 +29,7 @@ def handle_db_failure(func):
     def wrapped(*args, **kwargs):
         try:
             return func(*args, **kwargs)
-        except OperationalError:
+        except (ProgrammingError, OperationalError):
             logging.exception('Failed processing signal %s', func.__name__)
             return
     return wrapped
@@ -47,7 +44,6 @@ def create_default_projects(created_models, verbosity=2, **kwargs):
         name='Internal',
         slug='internal',
         verbosity=verbosity,
-        platform='django',
     )
 
     if settings.SENTRY_FRONTEND_PROJECT:
@@ -56,7 +52,6 @@ def create_default_projects(created_models, verbosity=2, **kwargs):
             name='Frontend',
             slug='frontend',
             verbosity=verbosity,
-            platform='javascript'
         )
 
 
@@ -77,9 +72,17 @@ def create_default_project(id, name, slug, verbosity=2, **kwargs):
     org, _ = Organization.objects.get_or_create(
         slug='sentry',
         defaults={
-            'owner': user,
             'name': 'Sentry',
         }
+    )
+
+    OrganizationMember.objects.get_or_create(
+        user=user,
+        organization=org,
+        defaults={
+            'type': OrganizationMemberType.OWNER,
+            'has_global_access': True,
+        },
     )
 
     team, _ = Team.objects.get_or_create(
@@ -142,32 +145,6 @@ def create_keys_for_project(instance, created, **kwargs):
         )
 
 
-def create_org_member_for_owner(instance, created, **kwargs):
-    if not created:
-        return
-
-    if not instance.owner:
-        return
-
-    instance.member_set.get_or_create(
-        user=instance.owner,
-        type=OrganizationMemberType.OWNER,
-        has_global_access=True,
-    )
-
-
-# Set user language if set
-def set_language_on_logon(request, user, **kwargs):
-    language = UserOption.objects.get_value(
-        user=user,
-        project=None,
-        key='language',
-        default=None,
-    )
-    if language and hasattr(request, 'session'):
-        request.session['django_language'] = language
-
-
 @buffer_incr_complete.connect(sender=TagValue, weak=False)
 def record_project_tag_count(filters, created, **kwargs):
     from sentry import app
@@ -225,13 +202,6 @@ def create_regression_activity(instance, **kwargs):
     )
 
 
-def on_alert_creation(instance, **kwargs):
-    from sentry.plugins import plugins
-
-    for plugin in plugins.for_project(instance.project):
-        safe_execute(plugin.on_alert, alert=instance)
-
-
 # Anything that relies on default objects that may not exist with default
 # fields should be wrapped in handle_db_failure
 post_syncdb.connect(
@@ -243,22 +213,5 @@ post_save.connect(
     handle_db_failure(create_keys_for_project),
     sender=Project,
     dispatch_uid="create_keys_for_project",
-    weak=False,
-)
-post_save.connect(
-    handle_db_failure(create_org_member_for_owner),
-    sender=Organization,
-    dispatch_uid="create_org_member_for_owner",
-    weak=False,
-)
-user_logged_in.connect(
-    set_language_on_logon,
-    dispatch_uid="set_language_on_logon",
-    weak=False
-)
-post_save.connect(
-    on_alert_creation,
-    sender=Alert,
-    dispatch_uid="on_alert_creation",
     weak=False,
 )

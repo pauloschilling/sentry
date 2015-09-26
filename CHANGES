@@ -1,10 +1,34 @@
+Version 7.8.0
+-------------
+
+- Clients which were only sending ``sentry_key`` and not using CORS will no
+  longer be able to authenticate.
+- All incoming events now log through ``sentry.api``, which will additionally
+  capture far more events with improved console formatting.
+- The 'sentry' user can no longer be removed.
+- The Cassandra nodestore backend was broken, and this has been resolved.
+- The ``has_perm`` plugin hook is no longer used.
+- Do not unconditionally map sys.stdout to sys.stderr
+
+
 Version 7.7.0
 -------------
 
 - The behavior of ``create_or_update`` has changed. If you're using it please see the updated function.
 - Added ``Group.first_release`` column.
 - Added ``SavedSearch`` model for future features.
+- Added ``Release.new_groups`` column.
 - The explore feature is now deprecated and links have been hidden.
+- Expanded various API endpoints for future usage.
+- Initial prototype of embeddable crash reports. This adds the ``UserReport`` model.
+- Added basic UI reporting for status checks.
+- Added celery/beat alive check.
+- Added celery app version check.
+- Added queue overview to internal administration.
+- Upped TSDB's storage of 10s to 60m of data.
+- Added protocol version 7 to client spec.
+  - Adds ``fingerprint`` attribute.
+- The behavior of ``SENTRY_ENABLE_EXPLORE_USERS`` is now default and the setting has been removed.
 
 Version 7.6.2
 -------------

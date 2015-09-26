@@ -19,7 +19,7 @@ from urlparse import urlparse, urljoin, urlsplit
 from sentry import http
 from sentry.constants import MAX_CULPRIT_LENGTH
 from sentry.interfaces.stacktrace import Stacktrace
-from sentry.models import Project, Release, ReleaseFile
+from sentry.models import EventError, Release, ReleaseFile
 from sentry.utils.cache import cache
 from sentry.utils.http import is_valid_origin
 from sentry.utils.strings import truncatechars
@@ -44,20 +44,13 @@ CLEAN_MODULE_RE = re.compile(r"""^
 )/)+|
 (?:[-\.][a-f0-9]{7,}$)  # Ending in a commitish
 """, re.X | re.I)
+VERSION_RE = re.compile(r'^[a-f0-9]{32}|[a-f0-9]{40}$', re.I)
 # the maximum number of remote resources (i.e. sourc eifles) that should be
 # fetched
 MAX_RESOURCE_FETCHES = 100
 
 # TODO(dcramer): we want to change these to be constants so they are easier
 # to translate/link again
-ERR_DOMAIN_BLACKLISTED = 'The domain has been temporarily blacklisted due to previous failures:\n{reason}.'
-ERR_GENERIC_FETCH_FAILURE = 'A {type} error was hit while fetching the source'
-ERR_HTTP_CODE = 'Received HTTP {status_code} response'
-ERR_NO_COLUMN = 'No column information available (cant expand sourcemap)'
-ERR_MISSING_SOURCE = 'Source was not found: {filename}'
-ERR_SOURCEMAP_UNPARSEABLE = 'Sourcemap was not parseable (likely invalid JSON)'
-ERR_TOO_MANY_REMOTE_SOURCES = 'Not fetching context due to too many remote sources'
-ERR_UNKNOWN_INTERNAL_ERROR = 'An unknown internal error occurred while attempting to fetch the source'
 
 UrlResult = namedtuple('UrlResult', ['url', 'headers', 'body'])
 
@@ -65,19 +58,22 @@ logger = logging.getLogger(__name__)
 
 
 class BadSource(Exception):
-    pass
+    error_type = EventError.UNKNOWN_ERROR
 
-
-class DomainBlacklisted(BadSource):
-    pass
+    def __init__(self, data=None):
+        if data is None:
+            data = {}
+        data.setdefault('type', self.error_type)
+        super(BadSource, self).__init__(data['type'])
+        self.data = data
 
 
 class CannotFetchSource(BadSource):
-    pass
+    error_type = EventError.JS_GENERIC_FETCH_ERROR
 
 
 class UnparseableSourcemap(BadSource):
-    pass
+    error_type = EventError.JS_INVALID_SOURCEMAP
 
 
 def trim_line(line, column=0):
@@ -235,14 +231,13 @@ def fetch_url(url, project=None, release=None):
     if result is None:
         # lock down domains that are problematic
         domain = urlparse(url).netloc
-        domain_key = 'source:blacklist:%s' % (
+        domain_key = 'source:blacklist:v2:%s' % (
             md5(domain.encode('utf-8')).hexdigest(),
         )
         domain_result = cache.get(domain_key)
         if domain_result:
-            raise DomainBlacklisted(ERR_DOMAIN_BLACKLISTED.format(
-                reason=domain_result,
-            ))
+            domain_result['url'] = url
+            raise CannotFetchSource(domain_result)
 
         headers = {}
         if project and is_valid_origin(url, project=project):
@@ -264,14 +259,23 @@ def fetch_url(url, project=None, release=None):
         except Exception as exc:
             logger.debug('Unable to fetch %r', url, exc_info=True)
             if isinstance(exc, SuspiciousOperation):
-                error = unicode(exc)
+                error = {
+                    'type': EventError.SECURITY_VIOLATION,
+                    'value': unicode(exc),
+                    'url': url,
+                }
             elif isinstance(exc, (RequestException, ZeroReturnError)):
-                error = ERR_GENERIC_FETCH_FAILURE.format(
-                    type=type(exc),
-                )
+                error = {
+                    'type': EventError.JS_GENERIC_FETCH_ERROR,
+                    'value': str(type(exc)),
+                    'url': url,
+                }
             else:
                 logger.exception(unicode(exc))
-                error = ERR_UNKNOWN_INTERNAL_ERROR
+                error = {
+                    'type': EventError.UNKNOWN_ERROR,
+                    'url': url,
+                }
 
             # TODO(dcramer): we want to be less aggressive on disabling domains
             cache.set(domain_key, error or '', 300)
@@ -294,9 +298,11 @@ def fetch_url(url, project=None, release=None):
     if result[2] != 200:
         logger.debug('HTTP %s when fetching %r', result[2], url,
                      exc_info=True)
-        error = ERR_HTTP_CODE.format(
-            status_code=result[2],
-        )
+        error = {
+            'type': EventError.JS_INVALID_HTTP_CODE,
+            'value': result[2],
+            'url': url,
+        }
         raise CannotFetchSource(error)
 
     return UrlResult(url, result[0], result[1])
@@ -319,7 +325,9 @@ def fetch_sourcemap(url, project=None, release=None):
     try:
         return sourcemap_to_index(body)
     except (JSONDecodeError, ValueError):
-        raise UnparseableSourcemap(ERR_SOURCEMAP_UNPARSEABLE)
+        raise UnparseableSourcemap({
+            'url': url,
+        })
 
 
 def is_data_uri(url):
@@ -345,11 +353,19 @@ def generate_module(src):
 
     if filename.endswith('.min'):
         filename = filename[:-4]
+
+    # TODO(dcramer): replace CLEAN_MODULE_RE with tokenizer completely
+    tokens = filename.split('/')
+    for idx, token in enumerate(tokens):
+        # a SHA
+        if VERSION_RE.match(token):
+            return '/'.join(tokens[idx + 1:])
+
     return CLEAN_MODULE_RE.sub('', filename) or UNKNOWN_MODULE
 
 
 def generate_culprit(frame):
-    return '%s in %s' % (frame.module, frame.function)
+    return '%s in %s' % (frame.module or frame.filename, frame.function)
 
 
 class SourceProcessor(object):
@@ -373,19 +389,25 @@ class SourceProcessor(object):
     def get_stacktraces(self, data):
         try:
             stacktraces = [
-                Stacktrace.to_python(e['stacktrace'])
+                e['stacktrace']
                 for e in data['sentry.interfaces.Exception']['values']
                 if e.get('stacktrace')
             ]
         except KeyError:
-            stacktraces = None
+            stacktraces = []
 
-        return stacktraces
+        if 'sentry.interfaces.Stacktrace' in data:
+            stacktraces.append(data['sentry.interfaces.Stacktrace'])
+
+        return [
+            (s, Stacktrace.to_python(s))
+            for s in stacktraces
+        ]
 
     def get_valid_frames(self, stacktraces):
         # build list of frames that we can actually grab source for
         frames = []
-        for stacktrace in stacktraces:
+        for _, stacktrace in stacktraces:
             frames.extend([
                 f for f in stacktrace.frames
                 if f.lineno is not None
@@ -402,7 +424,7 @@ class SourceProcessor(object):
             version=data['release'],
         )
 
-    def process(self, data):
+    def process(self, project, data):
         stacktraces = self.get_stacktraces(data)
         if not stacktraces:
             logger.debug('No stacktrace for event %r', data['event_id'])
@@ -413,30 +435,28 @@ class SourceProcessor(object):
             logger.debug('Event %r has no frames with enough context to fetch remote source', data['event_id'])
             return
 
-        project = Project.objects.get_from_cache(
-            id=data['project'],
-        )
+        data.setdefault('errors', [])
+        errors = data['errors']
 
         release = self.get_release(project, data)
-
         # all of these methods assume mutation on the original
         # objects rather than re-creation
         self.populate_source_cache(project, frames, release)
-        self.expand_frames(frames)
+        errors.extend(self.expand_frames(frames) or [])
         self.ensure_module_names(frames)
         self.fix_culprit(data, stacktraces)
-        self.update_stacktraces(data, stacktraces)
+        self.update_stacktraces(stacktraces)
 
         return data
 
     def fix_culprit(self, data, stacktraces):
-        culprit_frame = stacktraces[0].frames[-1]
-        if culprit_frame.module and culprit_frame.function:
+        culprit_frame = stacktraces[-1][1].frames[-1]
+        if culprit_frame.filename and culprit_frame.function:
             data['culprit'] = truncatechars(generate_culprit(culprit_frame), MAX_CULPRIT_LENGTH)
 
-    def update_stacktraces(self, data, stacktraces):
-        for exception, stacktrace in zip(data['sentry.interfaces.Exception']['values'], stacktraces):
-            exception['stacktrace'] = stacktrace.to_json()
+    def update_stacktraces(self, stacktraces):
+        for raw, interface in stacktraces:
+            raw.update(interface.to_json())
 
     def ensure_module_names(self, frames):
         # TODO(dcramer): this doesn't really fit well with generic URLs so we
@@ -452,13 +472,13 @@ class SourceProcessor(object):
 
         cache = self.cache
         sourcemaps = self.sourcemaps
+        all_errors = []
 
         for frame in frames:
             errors = cache.get_errors(frame.abs_path)
             if errors:
                 has_changes = True
-
-            frame.errors = errors
+                all_errors.extend(errors)
 
             source = cache.get(frame.abs_path)
             if source is None:
@@ -485,11 +505,12 @@ class SourceProcessor(object):
                     }
                     errors = cache.get_errors(abs_path)
                     if errors:
-                        frame.errors.extend(errors)
+                        all_errors.extend(errors)
                     else:
-                        frame.errors.append(ERR_MISSING_SOURCE.format(
-                            filename=abs_path.encode('utf-8'),
-                        ))
+                        all_errors.append({
+                            'type': EventError.JS_MISSING_SOURCE,
+                            'url': abs_path.encode('utf-8'),
+                        })
 
                 # Store original data in annotation
                 frame.data = {
@@ -510,9 +531,23 @@ class SourceProcessor(object):
                     frame.function = last_state.name or frame.function
                 else:
                     frame.function = state.name or frame.function
+
+                filename = state.src
+                # special case webpack support
+                if filename.startswith('webpack://'):
+                    abs_path = filename
+                    # webpack seems to use ~ to imply "relative to resolver root"
+                    # which is generally seen for third party deps
+                    # (i.e. node_modules)
+                    if '/~/' in filename:
+                        filename = '~/' + abs_path.split('/~/', 1)[-1]
+                    else:
+                        filename = filename.split('webpack:///', 1)[-1]
+
                 frame.abs_path = abs_path
-                frame.filename = state.src
-                frame.module = generate_module(state.src)
+                frame.filename = filename
+                if abs_path.startswith(('http:', 'https:')):
+                    frame.module = generate_module(abs_path)
 
             elif sourcemap_url:
                 frame.data = {
@@ -522,6 +557,7 @@ class SourceProcessor(object):
             # TODO: theoretically a minified source could point to another mapped, minified source
             frame.pre_context, frame.context_line, frame.post_context = get_source_context(
                 source=source, lineno=frame.lineno, colno=frame.colno or 0)
+        return all_errors
 
     def populate_source_cache(self, project, frames, release):
         pending_file_list = set()
@@ -543,7 +579,9 @@ class SourceProcessor(object):
             done_file_list.add(filename)
 
             if idx > self.max_fetches:
-                cache.add_error(filename, ERR_TOO_MANY_REMOTE_SOURCES)
+                cache.add_error(filename, {
+                    'type': EventError.JS_TOO_MANY_REMOTE_SOURCES,
+                })
                 continue
 
             # TODO: respect cache-control/max-age headers to some extent
@@ -551,7 +589,7 @@ class SourceProcessor(object):
             try:
                 result = fetch_url(filename, project=project, release=release)
             except BadSource as exc:
-                cache.add_error(filename, unicode(exc))
+                cache.add_error(filename, exc.data)
                 continue
 
             cache.add(filename, result.body.splitlines())
@@ -563,7 +601,10 @@ class SourceProcessor(object):
 
             # If we didn't have a colno, a sourcemap wont do us any good
             if filename not in sourcemap_capable:
-                cache.add_error(filename, ERR_NO_COLUMN)
+                cache.add_error(filename, {
+                    'type': EventError.JS_NO_COLUMN,
+                    'url': filename,
+                })
                 continue
 
             logger.debug('Found sourcemap %r for minified script %r', sourcemap_url[:256], result.url)
@@ -580,7 +621,7 @@ class SourceProcessor(object):
                     release=release,
                 )
             except BadSource as exc:
-                cache.add_error(filename, unicode(exc))
+                cache.add_error(filename, exc.data)
                 continue
 
             sourcemaps.add(sourcemap_url, sourcemap_idx)

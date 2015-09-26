@@ -181,14 +181,14 @@ LANGUAGES = [(k, LANGUAGE_MAP[k]) for k in get_all_languages() if k in LANGUAGE_
 
 # TODO(dcramer): We eventually want to make this user-editable
 TAG_LABELS = {
-    'exc_type': _('Exception Type'),
-    'sentry:user': _('User'),
-    'sentry:filename': _('File'),
-    'sentry:function': _('Function'),
-    'sentry:release': _('Release'),
-    'os': _('OS'),
-    'url': _('URL'),
-    'server_name': _('Server'),
+    'exc_type': 'Exception Type',
+    'sentry:user': 'User',
+    'sentry:filename': 'File',
+    'sentry:function': 'Function',
+    'sentry:release': 'Release',
+    'os': 'OS',
+    'url': 'URL',
+    'server_name': 'Server',
 }
 
 # TODO(dcramer): once this is more flushed out we want this to be extendable
@@ -209,10 +209,12 @@ HTTP_METHODS = ('GET', 'POST', 'PUT', 'OPTIONS', 'HEAD', 'DELETE', 'TRACE', 'CON
 
 CLIENT_RESERVED_ATTRS = (
     'project',
+    'errors',
     'event_id',
     'message',
     'checksum',
     'culprit',
+    'fingerprint',
     'level',
     'time_spent',
     'logger',

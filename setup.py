@@ -56,13 +56,13 @@ tests_require = [
     'blist',  # used by cassandra
     'casscache',
     'cqlsh',
+    'datadog',
     'elasticsearch',
     'httpretty',
     'pytest-cov>=1.4',
     'pytest-timeout',
     'python-coveralls',
     'responses',
-    'riak',
 ]
 
 
@@ -73,12 +73,12 @@ install_requires = [
     'Django>=1.6.0,<1.7',
     'django-bitfield>=1.7.0,<1.8.0',
     'django-crispy-forms>=1.4.0,<1.5.0',
+    'django-debug-toolbar>=1.3.2,<1.4.0',
     'django-paging>=0.2.5,<0.3.0',
-    'django-jsonfield>=0.9.13,<0.10.0',
+    'django-jsonfield>=0.9.13,<0.9.14',
     'django-picklefield>=0.3.0,<0.4.0',
     'django-recaptcha>=1.0.0,<1.1.0',
     'django-social-auth>=0.7.28,<0.8.0',
-    'django-statsd-mozilla>=0.3.14.0,<0.3.15.0',
     'django-sudo>=1.1.3,<1.2.0',
     'django-templatetag-sugar>=0.1.0',
     'djangorestframework>=2.3.8,<2.4.0',
@@ -90,7 +90,6 @@ install_requires = [
     'logan>=0.7.1,<0.8.0',
     'lxml>=3.4.1',
     'mock>=0.8.0',
-    'nydus>=0.11.0,<0.12.0',
     'markdown>=2.4.1,<2.5.0',
     'petname>=1.7,<1.8',
     'progressbar>=2.2,<2.4',
@@ -99,8 +98,8 @@ install_requires = [
     'python-dateutil>=2.0.0,<3.0.0',
     'python-memcached>=1.53,<2.0.0',
     'raven>=5.3.0',
-    'redis>=2.7.0,<2.11.0',
-    'requests[security]>=2.5.1,<2.6.0',
+    'redis>=2.10.3,<2.11.0',
+    'requests[security]>=2.7.0,<2.8.0',
     'simplejson>=3.1.0,<3.4.0',
     'six>=1.6.0,<2.0.0',
     'setproctitle>=1.1.7,<1.2.0',
@@ -108,7 +107,8 @@ install_requires = [
     'South==1.0.1',
     'toronado>=0.0.4,<0.1.0',
     'ua-parser>=0.3.5',
-    'urllib3>=1.7.1,<1.8.0',
+    'urllib3>=1.11,<1.12',
+    'rb>=1.1.0,<2.0.0',
 ]
 
 postgres_requires = [
@@ -191,7 +191,7 @@ class SmartInstall(install):
 
 setup(
     name='sentry',
-    version='7.7.0.dev0',
+    version='7.8.0.dev0',
     author='David Cramer',
     author_email='dcramer@gmail.com',
     url='https://www.getsentry.com',

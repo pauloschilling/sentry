@@ -11,15 +11,15 @@ from datetime import timedelta
 from django.core.management.base import BaseCommand
 from django.db import connections
 from django.utils import timezone
-from nydus.utils import ThreadPool
 from optparse import make_option
 
 from sentry.app import nodestore
 from sentry.models import (
-    Activity, Alert, Event, EventMapping, Group, GroupRuleStatus, GroupTagValue,
-    LostPasswordHash, TagValue
+    Event, EventMapping, Group, GroupRuleStatus, GroupTagValue,
+    LostPasswordHash, TagValue, GroupEmailThread,
 )
 from sentry.utils import db
+from sentry.utils.threadpool import ThreadPool
 
 
 def delete_object(item):
@@ -39,9 +39,8 @@ class Command(BaseCommand):
     BULK_DELETES = (
         (GroupRuleStatus, 'date_added'),
         (GroupTagValue, 'last_seen'),
-        (Activity, 'datetime'),
         (TagValue, 'last_seen'),
-        (Alert, 'datetime'),
+        (GroupEmailThread, 'date'),
     )
 
     GENERIC_DELETES = (

@@ -10,7 +10,7 @@ from __future__ import absolute_import
 import warnings
 
 from django.contrib.auth.models import AbstractBaseUser, UserManager
-from django.db import models
+from django.db import IntegrityError, models, transaction
 from django.utils import timezone
 from django.utils.translation import ugettext_lazy as _
 
@@ -58,6 +58,11 @@ class User(BaseModel, AbstractBaseUser):
         verbose_name = _('user')
         verbose_name_plural = _('users')
 
+    def delete(self):
+        if self.username == 'sentry':
+            raise Exception('You cannot delete the "sentry" user as it is required by Sentry.')
+        return super(User, self).delete()
+
     def save(self, *args, **kwargs):
         if not self.username:
             self.username = self.email
@@ -80,18 +85,45 @@ class User(BaseModel, AbstractBaseUser):
     def merge_to(from_user, to_user):
         # TODO: we could discover relations automatically and make this useful
         from sentry.models import (
-            GroupBookmark, Organization, OrganizationMember,
-            UserOption
+            AuditLogEntry, Activity, AuthIdentity, GroupBookmark,
+            OrganizationMember, UserOption
         )
 
-        for obj in Organization.objects.filter(owner=from_user):
-            obj.update(owner=to_user)
         for obj in OrganizationMember.objects.filter(user=from_user):
-            obj.update(user=to_user)
+            with transaction.atomic():
+                try:
+                    obj.update(user=to_user)
+                except IntegrityError:
+                    pass
         for obj in GroupBookmark.objects.filter(user=from_user):
-            obj.update(user=to_user)
+            with transaction.atomic():
+                try:
+                    obj.update(user=to_user)
+                except IntegrityError:
+                    pass
         for obj in UserOption.objects.filter(user=from_user):
-            obj.update(user=to_user)
+            with transaction.atomic():
+                try:
+                    obj.update(user=to_user)
+                except IntegrityError:
+                    pass
+
+        Activity.objects.filter(
+            user=from_user,
+        ).update(user=to_user)
+        AuditLogEntry.objects.filter(
+            actor=from_user,
+        ).update(actor=to_user)
+        AuditLogEntry.objects.filter(
+            target_user=from_user,
+        ).update(target_user=to_user)
+        AuthIdentity.objects.filter(
+            user=from_user,
+        ).update(user=to_user)
 
     def get_display_name(self):
         return self.first_name or self.email or self.username
+
+    def is_active_superuser(self):
+        # TODO(dcramer): add VPN support via INTERNAL_IPS + ipaddr ranges
+        return self.is_superuser

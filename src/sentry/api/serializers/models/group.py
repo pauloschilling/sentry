@@ -9,7 +9,7 @@ from sentry.api.serializers import Serializer, register, serialize
 from sentry.app import tsdb
 from sentry.models import (
     Group, GroupAssignee, GroupBookmark, GroupMeta, GroupTagKey, GroupSeen,
-    GroupStatus, TagKey
+    GroupStatus, TagKey, TagKeyStatus
 )
 from sentry.utils.db import attach_foreignkey
 from sentry.utils.http import absolute_uri
@@ -66,14 +66,21 @@ class GroupSerializer(Serializer):
 
             tags = {}
             for key in tag_counts.iterkeys():
-                # TODO(dcramer): query for these
-                tagkey = tagkeys[key]
+                try:
+                    tagkey = tagkeys[key]
+                except KeyError:
+                    label = key.replace('_', ' ').title()
+                else:
+                    if tagkey.status != TagKeyStatus.VISIBLE:
+                        continue
+                    label = tagkey.get_label()
+
                 try:
                     value = tag_counts[key].get(item.id, 0)
                 except KeyError:
                     value = 0
                 tags[key] = {
-                    'name': tagkey.get_label(),
+                    'name': label,
                     'count': value,
                 }
 
@@ -81,7 +88,7 @@ class GroupSerializer(Serializer):
             for plugin in plugins.for_project(project=item.project, version=1):
                 safe_execute(plugin.tags, None, item, annotations)
             for plugin in plugins.for_project(project=item.project, version=2):
-                annotations.extend(safe_execute(plugin.get_annotations, item) or ())
+                annotations.extend(safe_execute(plugin.get_annotations, group=item) or ())
 
             result[item] = {
                 'assigned_to': serialize(assignees.get(item.id)),

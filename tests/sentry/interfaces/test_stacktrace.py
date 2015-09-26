@@ -7,7 +7,7 @@ import mock
 from exam import fixture
 
 from sentry.interfaces.stacktrace import (
-    Frame, Stacktrace, get_context, trim_frames
+    Frame, Stacktrace, get_context, slim_frame_data
 )
 from sentry.models import Event
 from sentry.testutils import TestCase
@@ -71,14 +71,14 @@ class StacktraceTest(TestCase):
         assert frame.filename == '/foo.js'
         assert frame.abs_path == 'http://foo.com/foo.js'
 
-    def test_coerces_url_abs_paths(self):
+    def test_does_not_overwrite_filename(self):
         interface = Stacktrace.to_python(dict(frames=[{
             'lineno': 1,
             'filename': 'foo.js',
             'abs_path': 'http://foo.com/foo.js',
         }]))
         frame = interface.frames[0]
-        assert frame.filename == '/foo.js'
+        assert frame.filename == 'foo.js'
         assert frame.abs_path == 'http://foo.com/foo.js'
 
     def test_ignores_results_with_empty_path(self):
@@ -252,6 +252,32 @@ class StacktraceTest(TestCase):
         result = interface.get_hash()
         self.assertEquals(result, ['foo.py', 'foo bar'])
 
+    def test_get_hash_discards_seemingly_useless_stack(self):
+        interface = Stacktrace.to_python({
+            'frames': [{
+                'context_line': '<HTML>',
+                'lineno': 1,
+                'abs_path': 'http://example.com/foo',
+                'filename': 'foo',
+                'function': '?',
+            }],
+        })
+        result = interface.get_hash()
+        assert result == []
+
+    def test_get_hash_does_not_discard_non_urls(self):
+        interface = Stacktrace.to_python({
+            'frames': [{
+                'context_line': '<HTML>',
+                'lineno': 1,
+                'abs_path': 'foo',
+                'filename': 'foo',
+                'function': '?',
+            }],
+        })
+        result = interface.get_hash()
+        assert result != []
+
     @mock.patch('sentry.interfaces.stacktrace.Stacktrace.get_stacktrace')
     def test_to_string_returns_stacktrace(self, get_stacktrace):
         event = mock.Mock(spec=Event())
@@ -338,24 +364,40 @@ class StacktraceTest(TestCase):
         self.assertEquals(result, 'Stacktrace (most recent call last):\n\n  File "foo", line 3, in biz\n    def foo(r):\n  File "bar", line 5, in baz\n    return None')
 
 
-class TrimFramesTest(TestCase):
+class SlimFrameDataTest(TestCase):
     def test_under_max(self):
         value = {'frames': [{'filename': 'foo'}]}
-        trim_frames(value)
+        slim_frame_data(value)
         assert len(value['frames']) == 1
         assert value.get('frames_omitted') is None
 
     def test_over_max(self):
         values = []
         for n in xrange(5):
-            values.append({'filename': 'frame %d' % n})
+            values.append({
+                'filename': 'frame %d' % n,
+                'vars': {},
+                'pre_context': [],
+                'post_context': [],
+            })
         value = {'frames': values}
-        trim_frames(value, max_frames=4)
+        slim_frame_data(value, 4)
 
-        assert len(value['frames']) == 4
+        assert len(value['frames']) == 5
 
         for value, num in zip(values[:2], xrange(2)):
             assert value['filename'] == 'frame %d' % num
+            assert value['vars'] is not None
+            assert value['pre_context'] is not None
+            assert value['post_context'] is not None
 
-        for value, num in zip(values[2:], xrange(3, 5)):
+        assert values[2]['filename'] == 'frame 2'
+        assert 'vars' not in values[2]
+        assert 'pre_context' not in values[2]
+        assert 'post_context' not in values[2]
+
+        for value, num in zip(values[3:], xrange(3, 5)):
             assert value['filename'] == 'frame %d' % num
+            assert value['vars'] is not None
+            assert value['pre_context'] is not None
+            assert value['post_context'] is not None

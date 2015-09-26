@@ -4,6 +4,7 @@ import mock
 import os
 
 from django.conf import settings
+from redis import StrictRedis
 
 
 def pytest_configure(config):
@@ -63,7 +64,6 @@ def pytest_configure(config):
 
     # enable draft features
     settings.SENTRY_ENABLE_EXPLORE_CODE = True
-    settings.SENTRY_ENABLE_EXPLORE_USERS = True
     settings.SENTRY_ENABLE_EMAIL_REPLIES = True
 
     # disable error reporting by default
@@ -98,8 +98,8 @@ def pytest_configure(config):
     patcher = mock.patch('socket.getfqdn', return_value='localhost')
     patcher.start()
 
-    from sentry.testutils.cases import flush_redis
-    flush_redis()
+    client = StrictRedis(db=9)
+    client.flushdb()
 
     from sentry.utils.runner import initialize_receivers, fix_south
     initialize_receivers()
@@ -114,7 +114,6 @@ def pytest_runtest_teardown(item):
     from sentry.app import tsdb
     tsdb.flush()
 
-    from redis import StrictRedis
     client = StrictRedis(db=9)
     client.flushdb()
 

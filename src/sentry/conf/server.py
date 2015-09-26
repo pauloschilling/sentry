@@ -41,12 +41,6 @@ PROJECT_ROOT = os.path.normpath(os.path.join(os.path.dirname(__file__), os.pardi
 
 sys.path.insert(0, os.path.normpath(os.path.join(PROJECT_ROOT, os.pardir)))
 
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
-    }
-}
-
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
@@ -191,6 +185,8 @@ MIDDLEWARE_CLASSES = (
     'sentry.middleware.maintenance.ServicesUnavailableMiddleware',
     'sentry.middleware.proxy.SetRemoteAddrFromForwardedFor',
     'sentry.middleware.debug.NoIfModifiedSinceMiddleware',
+    'sentry.middleware.stats.RequestTimingMiddleware',
+    'sentry.middleware.stats.ResponseCodeMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -200,6 +196,7 @@ MIDDLEWARE_CLASSES = (
     'sentry.middleware.social_auth.SentrySocialAuthExceptionMiddleware',
     'django.middleware.locale.LocaleMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
+    'sentry.debug.middleware.DebugMiddleware',
 )
 
 ROOT_URLCONF = 'sentry.conf.urls'
@@ -232,6 +229,7 @@ INSTALLED_APPS = (
 
     'captcha',
     'crispy_forms',
+    'debug_toolbar',
     'gunicorn',
     'kombu.transport.django',
     'raven.contrib.django.raven_compat',
@@ -345,6 +343,9 @@ SOCIAL_AUTH_PROTECTED_USER_FIELDS = ['email']
 from kombu import Exchange, Queue
 
 BROKER_URL = "django://"
+BROKER_TRANSPORT_OPTIONS = {
+    'socket_timeout': 60,
+}
 
 CELERY_ALWAYS_EAGER = True
 CELERY_EAGER_PROPAGATES_EXCEPTIONS = True
@@ -367,6 +368,7 @@ CELERY_IMPORTS = (
     'sentry.tasks.merge',
     'sentry.tasks.store',
     'sentry.tasks.options',
+    'sentry.tasks.ping',
     'sentry.tasks.post_process',
     'sentry.tasks.process_buffer',
 )
@@ -414,6 +416,13 @@ CELERYBEAT_SCHEDULE = {
             'expires': 3600,
         },
     },
+    'send-ping': {
+        'task': 'sentry.tasks.send_ping',
+        'schedule': timedelta(minutes=1),
+        'options': {
+            'expires': 60,
+        },
+    },
     'flush-buffers': {
         'task': 'sentry.tasks.process_buffer.process_pending',
         'schedule': timedelta(seconds=10),
@@ -445,7 +454,17 @@ LOGGING = {
             'level': 'ERROR',
             'filters': ['sentry:internal'],
             'class': 'raven.contrib.django.handlers.SentryHandler',
-        }
+        },
+        'audit': {
+            'level': 'INFO',
+            'class': 'logging.StreamHandler',
+            'formatter': 'simple',
+        },
+        'console:api': {
+            'level': 'WARNING',
+            'class': 'logging.StreamHandler',
+            'formatter': 'client_info',
+        },
     },
     'filters': {
         'sentry:internal': {
@@ -457,7 +476,7 @@ LOGGING = {
             'format': '[%(levelname)s] %(message)s',
         },
         'client_info': {
-            'format': '[%(levelname)s] %(project_slug)s/%(team_slug)s %(message)s',
+            'format': '[%(levelname)s] [%(project)s] [%(agent)s] %(message)s',
         },
     },
     'root': {
@@ -467,8 +486,12 @@ LOGGING = {
         'sentry': {
             'level': 'ERROR',
         },
-        'sentry.coreapi': {
-            'formatter': 'client_info',
+        'sentry.api': {
+            'handlers': ['console:api', 'sentry'],
+            'propagate': False,
+        },
+        'sentry.deletions': {
+            'handlers': ['audit'],
         },
         'sentry.errors': {
             'handlers': ['console'],
@@ -507,11 +530,19 @@ REST_FRAMEWORK = {
 RECAPTCHA_PUBLIC_KEY = None
 RECAPTCHA_PRIVATE_KEY = None
 
-# django-statsd
+# Debugger
 
-STATSD_CLIENT = 'django_statsd.clients.null'
-SENTRY_METRICS_PREFIX = ''
-SENTRY_METRICS_SAMPLE_RATE = 1.0
+DEBUG_TOOLBAR_PANELS = (
+    'debug_toolbar.panels.timer.TimerPanel',
+    'sentry.debug.panels.route.RoutePanel',
+    'debug_toolbar.panels.templates.TemplatesPanel',
+
+    'debug_toolbar.panels.sql.SQLPanel',
+    # TODO(dcramer): https://github.com/getsentry/sentry/issues/1722
+    # 'sentry.debug.panels.redis.RedisPanel',
+)
+
+DEBUG_TOOLBAR_PATCH_SETTINGS = False
 
 # Sentry and Raven configuration
 
@@ -519,8 +550,6 @@ SENTRY_CLIENT = 'sentry.utils.raven.SentryInternalClient'
 
 # Project ID for recording frontend (javascript) exceptions
 SENTRY_FRONTEND_PROJECT = None
-
-SENTRY_CACHE_BACKEND = 'default'
 
 SENTRY_FEATURES = {
     'auth:register': True,
@@ -535,9 +564,14 @@ SENTRY_FEATURES = {
 # http://en.wikipedia.org/wiki/List_of_tz_zones_by_name
 SENTRY_DEFAULT_TIME_ZONE = 'UTC'
 
+
 SENTRY_FILTERS = (
     'sentry.filters.StatusFilter',
 )
+
+# Enable the Sentry Debugger (Beta)
+SENTRY_DEBUGGER = False
+
 
 SENTRY_IGNORE_EXCEPTIONS = (
     'OperationalError',
@@ -646,6 +680,19 @@ SENTRY_BUFFER_OPTIONS = {}
 SENTRY_CACHE = None
 SENTRY_CACHE_OPTIONS = {}
 
+# The internal Django cache is still used in many places
+# TODO(dcramer): convert uses over to Sentry's backend
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+    }
+}
+
+# The cache version affects both Django's internal cache (at runtime) as well
+# as Sentry's cache. This automatically overrides VERSION on the default
+# CACHES backend.
+CACHE_VERSION = 1
+
 # Quota backend
 SENTRY_QUOTAS = 'sentry.quotas.Quota'
 SENTRY_QUOTA_OPTIONS = {}
@@ -679,7 +726,7 @@ SENTRY_TSDB_OPTIONS = {}
 # rollups must be ordered from highest granularity to lowest
 SENTRY_TSDB_ROLLUPS = (
     # (time in seconds, samples to keep)
-    (10, 30),  # 5 minute at 10 seconds
+    (10, 360),  # 60 minutes at 10 seconds
     (3600, 24 * 7),  # 7 days at 1 hour
     (3600 * 24, 60),  # 60 days at 1 day
 )
@@ -689,8 +736,14 @@ SENTRY_TSDB_ROLLUPS = (
 SENTRY_FILESTORE = 'django.core.files.storage.FileSystemStorage'
 SENTRY_FILESTORE_OPTIONS = {'location': '/tmp/sentry-files'}
 
+# Internal metrics
+SENTRY_METRICS_BACKEND = 'sentry.metrics.dummy.DummyMetricsBackend'
+SENTRY_METRICS_OPTIONS = {}
+SENTRY_METRICS_SAMPLE_RATE = 1.0
+SENTRY_METRICS_PREFIX = 'sentry.'
+
 # URL to embed in js documentation
-SENTRY_RAVEN_JS_URL = 'cdn.ravenjs.com/1.1.15/jquery,native/raven.min.js'
+SENTRY_RAVEN_JS_URL = 'cdn.ravenjs.com/1.1.19/jquery,native/raven.min.js'
 
 # URI Prefixes for generating DSN URLs
 # (Defaults to URL_PREFIX by default)
@@ -699,7 +752,6 @@ SENTRY_PUBLIC_ENDPOINT = None
 
 # Early draft features. Not slated or public release yet.
 SENTRY_ENABLE_EXPLORE_CODE = False
-SENTRY_ENABLE_EXPLORE_USERS = True
 
 # Prevent variables (e.g. context locals, http data, etc) from exceeding this
 # size in characters
@@ -710,7 +762,7 @@ SENTRY_MAX_VARIABLE_SIZE = 512
 SENTRY_MAX_EXTRA_VARIABLE_SIZE = 4096
 
 # For changing the amount of data seen in Http Response Body part.
-SENTRY_MAX_HTTP_BODY_SIZE = 2048
+SENTRY_MAX_HTTP_BODY_SIZE = 4096 * 4  # 16kb
 
 # For various attributes we don't limit the entire attribute on size, but the
 # individual item. In those cases we also want to limit the maximum number of

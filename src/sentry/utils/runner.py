@@ -89,6 +89,9 @@ SENTRY_REDIS_OPTIONS = {
 # Cache #
 #########
 
+# Sentry currently utilizes two separate mechanisms. While CACHES is not a
+# requirement, it will optimize several high throughput patterns.
+
 # If you wish to use memcached, install the dependencies and adjust the config
 # as shown:
 #
@@ -100,16 +103,15 @@ SENTRY_REDIS_OPTIONS = {
 #         'LOCATION': ['127.0.0.1:11211'],
 #     }
 # }
-#
-# SENTRY_CACHE = 'sentry.cache.django.DjangoCache'
 
+# A primary cache is required for things such as processing events
 SENTRY_CACHE = 'sentry.cache.redis.RedisCache'
 
 #########
 # Queue #
 #########
 
-# See http://sentry.readthedocs.org/en/latest/queue/index.html for more
+# See https://docs.getsentry.com/on-premise/server/queue/ for more
 # information on configuring your queue broker and workers. Sentry relies
 # on a Python framework called Celery to manage queues.
 
@@ -119,6 +121,9 @@ BROKER_URL = 'redis://localhost:6379'
 ###############
 # Rate Limits #
 ###############
+
+# Rate limits apply to notification handlers and are enforced per-project
+# automatically.
 
 SENTRY_RATELIMITER = 'sentry.ratelimits.redis.RedisRateLimiter'
 
@@ -174,6 +179,10 @@ SENTRY_URL_PREFIX = 'http://sentry.example.com'  # No trailing slash!
 # header and uncomment the following settings
 # SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 # SESSION_COOKIE_SECURE = True
+
+# If you're not hosting at the root of your web server, and not using uWSGI,
+# you need to uncomment and set it to the path where Sentry is hosted.
+# FORCE_SCRIPT_NAME = '/sentry'
 
 SENTRY_WEB_HOST = '0.0.0.0'
 SENTRY_WEB_PORT = 9000
@@ -301,13 +310,15 @@ def initialize_app(config):
     if settings.CELERY_ALWAYS_EAGER and not settings.DEBUG:
         warnings.warn('Sentry is configured to run asynchronous tasks in-process. '
                       'This is not recommended within production environments. '
-                      'See http://sentry.readthedocs.org/en/latest/queue/index.html for more information.')
+                      'See https://docs.getsentry.com/on-premise/server/queue/ for more information.')
 
     if settings.SENTRY_SINGLE_ORGANIZATION:
         settings.SENTRY_FEATURES['organizations:create'] = False
 
     settings.SUDO_COOKIE_SECURE = getattr(settings, 'SESSION_COOKIE_SECURE', False)
     settings.SUDO_COOKIE_DOMAIN = getattr(settings, 'SESSION_COOKIE_DOMAIN', None)
+
+    settings.CACHES['default']['VERSION'] = settings.CACHE_VERSION
 
     initialize_receivers()
 
@@ -349,7 +360,7 @@ def apply_legacy_settings(config):
     # SENTRY_USE_QUEUE used to determine if Celery was eager or not
     if hasattr(settings, 'SENTRY_USE_QUEUE'):
         warnings.warn('SENTRY_USE_QUEUE is deprecated. Please use CELERY_ALWAYS_EAGER instead. '
-                      'See http://sentry.readthedocs.org/en/latest/queue/index.html for more information.', DeprecationWarning)
+                      'See https://docs.getsentry.com/on-premise/server/queue/ for more information.', DeprecationWarning)
         settings.CELERY_ALWAYS_EAGER = (not settings.SENTRY_USE_QUEUE)
 
     if not settings.SENTRY_ADMIN_EMAIL:

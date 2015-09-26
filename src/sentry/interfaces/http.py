@@ -106,7 +106,7 @@ class Http(Interface):
                 if query_string[0] == '?':
                     # remove '?' prefix
                     query_string = query_string[1:]
-            kwargs['query_string'] = trim(query_string, 1024)
+            kwargs['query_string'] = trim(query_string, 4096)
         else:
             kwargs['query_string'] = ''
 
@@ -128,16 +128,17 @@ class Http(Interface):
             headers = {}
 
         body = data.get('data')
+        max_size = settings.SENTRY_MAX_HTTP_BODY_SIZE
         # TODO(dcramer): a list as a body is not even close to valid
         if isinstance(body, (list, tuple)):
-            body = trim_dict(dict(enumerate(body)))
+            body = trim_dict(dict(enumerate(body)), max_size=max_size)
         elif isinstance(body, dict):
             body = trim_dict(dict(
                 (k, v or '')
                 for k, v in body.iteritems()
-            ))
+            ), max_size=max_size)
         elif body:
-            body = trim(body, settings.SENTRY_MAX_HTTP_BODY_SIZE)
+            body = trim(body, max_size=max_size)
             if headers.get('Content-Type') == cls.FORM_TYPE and '=' in body:
                 body = dict(parse_qsl(body, True))
 
@@ -156,7 +157,7 @@ class Http(Interface):
         kwargs['headers'] = headers
         kwargs['data'] = body
         kwargs['url'] = urlunsplit((scheme, netloc, path, '', ''))
-        kwargs['fragment'] = trim(fragment, 256)
+        kwargs['fragment'] = trim(fragment, 1024)
 
         return cls(**kwargs)
 

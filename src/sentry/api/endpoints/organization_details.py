@@ -1,5 +1,7 @@
 from __future__ import absolute_import
 
+import logging
+
 from rest_framework import serializers, status
 from rest_framework.response import Response
 
@@ -61,7 +63,7 @@ class OrganizationDetailsEndpoint(OrganizationEndpoint):
         context['access'] = access.from_user(request.user, organization).scopes
         context['features'] = feature_list
         context['teams'] = serialize(
-            team_list, request.user, TeamWithProjectsSerializer)
+            team_list, request.user, TeamWithProjectsSerializer())
         return Response(context)
 
     @sudo_required
@@ -111,6 +113,10 @@ class OrganizationDetailsEndpoint(OrganizationEndpoint):
         if organization.is_default:
             return Response({'detail': ERR_DEFAULT_ORG}, status=400)
 
+        logging.getLogger('sentry.deletions').info(
+            'Organization %s (id=%s) removal requested by user (id=%s)',
+            organization.slug, organization.id, request.user.id)
+
         updated = Organization.objects.filter(
             id=organization.id,
             status=OrganizationStatus.VISIBLE,
@@ -118,7 +124,15 @@ class OrganizationDetailsEndpoint(OrganizationEndpoint):
         if updated:
             delete_organization.delay(
                 object_id=organization.id,
-                countdown=60 * 5,
+                countdown=3600,
+            )
+
+            self.create_audit_entry(
+                request=request,
+                organization=organization,
+                target_object=organization.id,
+                event=AuditLogEntryEvent.ORG_REMOVE,
+                data=organization.get_audit_log_data(),
             )
 
         return Response(status=204)

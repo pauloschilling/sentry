@@ -16,6 +16,7 @@ import re
 import logging
 
 from django.core.urlresolvers import reverse
+from django.db.utils import DatabaseError
 from django.http import (
     HttpResponse, HttpResponsePermanentRedirect, HttpResponseRedirect, Http404
 )
@@ -29,7 +30,8 @@ from sentry.constants import (
 )
 from sentry.db.models import create_or_update
 from sentry.models import (
-    Project, Group, GroupMeta, Event, Activity, EventMapping, TagKey, GroupSeen
+    Project, Group, GroupMeta, Event, EventError, Activity, EventMapping,
+    TagKey, GroupSeen
 )
 from sentry.permissions import can_create_projects
 from sentry.plugins import plugins
@@ -183,9 +185,31 @@ def render_with_group_context(group, template, context, request=None,
             if not isinstance(extra_data, dict):
                 extra_data = {}
 
+            errors = []
+            error_set = set()
+            for error in event.data.get('errors', []):
+                error_data = json.dumps({
+                    k: v for k, v in error.iteritems()
+                    if k != 'type'
+                })
+                if error_data == '{}':
+                    error_data = None
+
+                error_hash = (error['type'], error_data)
+                if error_hash in error_set:
+                    continue
+                error_set.add(error_hash)
+                error_result = {
+                    'type': error['type'],
+                    'title': EventError.get_title(error['type']),
+                    'data': error_data,
+                }
+                errors.append(error_result)
+
             context.update({
                 'tags': event.get_tags(),
                 'json_data': extra_data,
+                'errors': errors,
             })
 
         context.update({
@@ -375,15 +399,18 @@ def group_details(request, organization, project, group, event_id=None):
 
     if request.user.is_authenticated() and project.has_access(request.user):
         # update that the user has seen this group
-        create_or_update(
-            GroupSeen,
-            group=group,
-            user=request.user,
-            project=project,
-            values={
-                'last_seen': timezone.now(),
-            }
-        )
+        try:
+            create_or_update(
+                GroupSeen,
+                group=group,
+                user=request.user,
+                project=project,
+                values={
+                    'last_seen': timezone.now(),
+                }
+            )
+        except DatabaseError as exc:
+            logging.warn(unicode(exc), exc_info=True)
 
     activity_qs = Activity.objects.filter(
         group=group,
